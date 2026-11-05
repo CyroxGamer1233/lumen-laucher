@@ -8,6 +8,7 @@ AppVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\Lumen
 PrivilegesRequired=lowest
 OutputBaseFilename=LumenSetup-{#AppVersion}
+OutputDir=..\dist\installer
 Compression=lzma2
 SolidCompression=yes
 ; SignTool=signtool   ; configure your code-signing cert in Inno's IDE or ISCC /S
