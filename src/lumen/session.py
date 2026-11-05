@@ -12,7 +12,7 @@ from .auth.store import AccountStore
 
 
 def client_id(settings) -> str:
-    return os.environ.get("LUMEN_MS_CLIENT_ID") or settings.ms_client_id
+    return os.environ.get("LUMEN_MS_CLIENT_ID", "").strip() or getattr(settings, "ms_client_id", "").strip()
 
 
 def store() -> AccountStore:
