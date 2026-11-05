@@ -1,0 +1,48 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: python -m pytest -q
+
+  client-mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v4
+      - run: gradle wrapper --gradle-version 8.8
+        working-directory: client-mod
+      - run: ./gradlew build
+        working-directory: client-mod
+      - uses: actions/upload-artifact@v4
+        with: { name: lumen-client-jar, path: client-mod/build/libs/*.jar }
+
+  bundle:
+    needs: [python, client-mod]
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m pip install -e ".[gui,dev]"
+      - run: python build/build_launcher.py
+      - uses: actions/upload-artifact@v4
+        with: { name: "lumen-${{ matrix.os }}", path: dist/ }
