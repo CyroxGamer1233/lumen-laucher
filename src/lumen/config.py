@@ -12,6 +12,8 @@ LOADERS = {"vanilla", "fabric", "forge"}
 
 @dataclass
 class Settings:
+    # Public Azure application identifier; not a client secret.
+    ms_client_id: str = ""
     mc_version: str = "1.21.1"
     loader: str = "fabric"
     jvm_profile: str = "balanced"
@@ -23,6 +25,7 @@ class Settings:
 
 
 def _validate(s: Settings) -> Settings:
+    s.ms_client_id = str(s.ms_client_id or "").strip()
     if s.jvm_profile not in PROFILES:
         s.jvm_profile = "balanced"
     if s.loader not in LOADERS:
