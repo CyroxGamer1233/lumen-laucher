@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+dist/
+build/_work/
+*.egg-info/
+.venv/
+client-mod/.gradle/
+client-mod/build/
