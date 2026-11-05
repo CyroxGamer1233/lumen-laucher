@@ -11,7 +11,7 @@ root = Path(__file__).resolve().parent.parent
 sep = ";" if sys.platform == "win32" else ":"
 
 args = [
-    str(root / "src" / "lumen" / "ui" / "app.py"),
+    str(root / "build" / "gui_entry.py"),
     "--name", "Lumen",
     "--windowed", "--noconfirm", "--clean",
     "--paths", str(root / "src"),

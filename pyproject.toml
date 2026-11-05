@@ -29,3 +29,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+ignore = ["E401", "E701", "E702"]
