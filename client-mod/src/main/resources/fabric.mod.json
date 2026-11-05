@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "lumen",
+  "version": "${version}",
+  "name": "Lumen Client",
+  "description": "Lightweight HUD (FPS / frametime) and benchmark recorder. Cosmetic and informational only.",
+  "authors": ["Lumen Team"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": { "client": ["dev.lumen.client.LumenClient"] },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
