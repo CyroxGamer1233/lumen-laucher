@@ -1,6 +1,6 @@
 """Read fabric.mod.json and detect dependency/conflict problems before launch."""
 from __future__ import annotations
-import json, re, zipfile
+import io, json, re, zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,15 +25,39 @@ class Issue:
 
 
 def read_fabric_mod(jar: Path) -> ModInfo | None:
-    try:
-        with zipfile.ZipFile(jar) as z:
-            j = json.loads(z.read("fabric.mod.json"))
-    except (KeyError, zipfile.BadZipFile, ValueError):
-        return None
-    return ModInfo(j["id"], str(j.get("version", "0")), jar, j.get("depends", {}) or {},
-                   j.get("recommends", {}) or {}, j.get("breaks", {}) or {},
-                   j.get("conflicts", {}) or {}, list(j.get("provides", []) or []))
+    mods = _read_fabric_mod_tree(jar.read_bytes(), jar)
+    return mods[0] if mods else None
 
+
+def _read_fabric_mod_tree(payload: bytes, source: Path, depth: int = 0) -> list[ModInfo]:
+    """Read a mod and its Fabric jar-in-jar modules."""
+    if depth > 32:
+        return []
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as z:
+            j = json.loads(z.read("fabric.mod.json"))
+            result = [ModInfo(
+                j["id"], str(j.get("version", "0")), source,
+                j.get("depends", {}) or {},
+                j.get("recommends", {}) or {},
+                j.get("breaks", {}) or {},
+                j.get("conflicts", {}) or {},
+                list(j.get("provides", []) or []),
+            )]
+            for nested in j.get("jars", []) or []:
+                name = nested.get("file") if isinstance(nested, dict) else None
+                if not name:
+                    continue
+                try:
+                    child = z.read(name)
+                except KeyError:
+                    continue
+                result.extend(_read_fabric_mod_tree(
+                    child, Path(f"{source}!{name}"), depth + 1
+                ))
+            return result
+    except (KeyError, json.JSONDecodeError, zipfile.BadZipFile, ValueError):
+        return []
 
 def _parts(v: str) -> list[int]:
     core = re.split(r"[-+]", v, maxsplit=1)[0]
@@ -106,4 +130,7 @@ def detect_conflicts(mods: list[ModInfo], mc_version: str, loader_version: str |
 
 
 def scan_folder(mods_dir: Path) -> list[ModInfo]:
-    return [mi for j in sorted(mods_dir.glob("*.jar")) if (mi := read_fabric_mod(j))]
+    found = []
+    for jar in sorted(mods_dir.glob("*.jar")):
+        found.extend(_read_fabric_mod_tree(jar.read_bytes(), jar))
+    return found
