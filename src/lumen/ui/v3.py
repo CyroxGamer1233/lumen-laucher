@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import webbrowser
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -11,8 +12,60 @@ from PySide6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget,
 )
 
-from .. import __version__, catalog, config, paths, servers, skins, session
-from .modern import LaunchWorker, SignInWorker
+from .. import __version__, catalog, config, logging_setup, paths, servers, skins, session
+
+class SignInWorker(QThread):
+    code = Signal(str, str)
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+
+    def run(self):
+        try:
+            account = session.sign_in(self.settings, lambda c, u: self.code.emit(c, u))
+            self.done.emit(account.username)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class LaunchWorker(QThread):
+    status = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, settings, offline, performance, force):
+        super().__init__()
+        self.settings, self.offline = settings, offline
+        self.performance, self.force = performance, force
+
+    def run(self):
+        try:
+            from ..launch import process, service
+            from ..mods import provision
+            from ..mods.manifest import detect_conflicts, scan_folder
+            s, emit = self.settings, self.status.emit
+            mc = paths.minecraft_dir()
+            game = paths.instance_dir(f"{s.loader}-{s.mc_version}")
+            emit("Preparing Minecraft files...")
+            version = service.prepare(s.mc_version, s.loader, mc, emit)
+            if s.loader == "fabric":
+                mods = game / "mods"
+                provision.prepare_mods(mods, s.mc_version, self.performance, emit)
+                errors = [i for i in detect_conflicts(scan_folder(mods), s.mc_version)
+                          if i.severity == "error"]
+                if errors and not self.force:
+                    self.failed.emit("Mod problems found. Review Mods or enable Launch anyway.")
+                    return
+            emit("Refreshing account session...")
+            account = session.get_account(s, self.offline)
+            command = service.build_command(version, account, s, mc, game)
+            emit(f"Launching as {account.username}...")
+            code = process.launch(command, game, paths.log_dir() / "game.log").wait()
+            emit(f"Game closed with exit code {code}.")
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 THEME = """
