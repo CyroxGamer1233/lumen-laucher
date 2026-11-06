@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the animated GUI."""
-from lumen.ui.modern import main
+"""PyInstaller entry point for the v3 GUI."""
+from lumen.ui.v3 import main
 
 raise SystemExit(main())
