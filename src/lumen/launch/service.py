@@ -42,6 +42,21 @@ def prepare(mc_version: str, loader: str, mc_dir: Path, on_status: Status | None
     return mc_version
 
 
+def ensure_java_runtime(version_id: str, settings: Settings, mc_dir: Path,
+                        on_status: Status | None = None) -> str | None:
+    """Install Mojang's matching Java runtime unless the user selected Java."""
+    if settings.java_path:
+        return settings.java_path
+    import minecraft_launcher_lib as mll
+    info = mll.utils.get_version_runtime_information(version_id, str(mc_dir))
+    if not info:
+        raise RuntimeError("Minecraft runtime information is unavailable")
+    if on_status:
+        on_status(f"Installing Java {info.get('javaMajorVersion', '')} runtime...")
+    mll.runtime.install_jvm_runtime(info["name"], str(mc_dir))
+    return info["name"]
+
+
 def build_command(version_id: str, account: Account, settings: Settings,
                   mc_dir: Path, game_dir: Path) -> list[str]:
     import minecraft_launcher_lib as mll
@@ -51,7 +66,7 @@ def build_command(version_id: str, account: Account, settings: Settings,
         if info:
             java_major = int(info.get("javaMajorVersion", java_major))
             if not settings.java_path:
-                mll.runtime.install_jvm_runtime(info["name"], str(mc_dir))
+                ensure_java_runtime(version_id, settings, mc_dir)
     except Exception as e:                      # fall back to system Java
         log.warning("Mojang runtime lookup failed: %s", e)
     options: dict = {
