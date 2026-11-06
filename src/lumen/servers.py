@@ -54,33 +54,32 @@ def _read(sock: socket.socket, size: int) -> bytes:
     return bytes(data)
 
 
+def _buffer_varint(data: bytes, offset: int) -> tuple[int, int]:
+    value = shift = 0
+    while offset < len(data) and shift < 35:
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, offset
+        shift += 7
+    raise ValueError("invalid packet VarInt")
+
+
 def query(host: str, port: int = 25565, timeout: float = 4.0) -> ServerStatus:
     result = ServerStatus(host, port)
     started = time.monotonic()
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             address = host.encode("utf-8")
-            handshake = _varint(0) + _varint(767) + _varint(len(address)) + address
+            handshake = _varint(767) + _varint(len(address)) + address
             handshake += port.to_bytes(2, "big") + _varint(1)
             sock.sendall(_varint(len(handshake) + 1) + _varint(0) + handshake)
             sock.sendall(_varint(1) + _varint(0))
             packet_length = _read_varint(sock)
             packet = _read(sock, packet_length)
-            index = 0
-            while packet[index] & 0x80:
-                index += 1
-            index += 1
-            text_length = packet[index]
-            index += 1
-            if text_length & 0x80:
-                # Status JSON is normally under 128 bytes only for tiny servers;
-                # use a proper VarInt parser for all responses.
-                shift = 7
-                text_length &= 0x7F
-                while packet[index - 1] & 0x80:
-                    text_length |= (packet[index] & 0x7F) << shift
-                    shift += 7
-                    index += 1
+            _, index = _buffer_varint(packet, 0)
+            text_length, index = _buffer_varint(packet, index)
             payload = json.loads(packet[index:index + text_length].decode("utf-8"))
         result.online = True
         result.latency_ms = round((time.monotonic() - started) * 1000)
