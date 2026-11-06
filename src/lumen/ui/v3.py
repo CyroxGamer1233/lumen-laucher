@@ -100,6 +100,28 @@ def card():
     return w
 
 
+class InstallWorker(QThread):
+    status = Signal(str)
+    failed = Signal(str)
+    done = Signal(str)
+
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+
+    def run(self):
+        try:
+            from ..launch import service
+            emit = self.status.emit
+            mc = paths.minecraft_dir()
+            emit("Installing Minecraft files...")
+            version = service.prepare(self.settings.mc_version, self.settings.loader, mc, emit)
+            service.ensure_java_runtime(version, self.settings, mc, emit)
+            self.done.emit("Minecraft and Java are ready.")
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class CatalogWorker(QThread):
     done = Signal(list)
     failed = Signal(str)
@@ -197,6 +219,9 @@ class LauncherV3(QMainWindow):
         play.setObjectName("primary")
         play.clicked.connect(self.launch_game)
         lay.addWidget(play, 0, Qt.AlignLeft)
+        install = QPushButton("INSTALL MINECRAFT + JAVA")
+        install.clicked.connect(self.install_game)
+        lay.addWidget(install, 0, Qt.AlignLeft)
         self.play_status = lbl("Ready.", "muted")
         lay.addWidget(self.play_status)
         lay.addStretch()
@@ -274,15 +299,14 @@ class LauncherV3(QMainWindow):
         return page
 
     def settings_tab(self):
-        page, lay = self.shell("SETTINGS", "Launcher preferences and API options.")
+        page, lay = self.shell("SETTINGS", "Launcher preferences and runtime setup.")
         panel, form = card(), QFormLayout()
         panel.setLayout(form)
-        self.client_id = QLineEdit(self.settings.ms_client_id)
         self.profile = QComboBox()
         self.profile.addItems(["low_end", "balanced", "high_end"])
         self.profile.setCurrentText(self.settings.jvm_profile)
-        form.addRow("Azure client ID", self.client_id)
         form.addRow("JVM profile", self.profile)
+        form.addRow("", lbl("Microsoft online sign-in is optional. If needed, set LUMEN_MS_CLIENT_ID in the environment.", "muted"))
         save = QPushButton("SAVE SETTINGS")
         save.clicked.connect(self.save_settings)
         form.addRow("", save)
@@ -302,14 +326,13 @@ class LauncherV3(QMainWindow):
         animation.start(QPropertyAnimation.DeleteWhenStopped)
 
     def save_settings(self):
-        self.settings.ms_client_id = getattr(self, "client_id", QLineEdit()).text().strip()
         self.settings.mc_version = self.version.currentText().strip()
         self.settings.loader = self.loader.currentText()
         self.settings.jvm_profile = self.profile.currentText()
         self.settings.offline_username = self.offline_name.text().strip() or "Player"
         self.settings.mod_profile = "performance" if self.performance.isChecked() else "minimal"
         config.save(self.settings, paths.config_path())
-        self.offline_state.setText("Saved. Offline mode requires one verified Microsoft sign-in.")
+        self.offline_state.setText("Saved. Offline mode requires verified ownership.")
 
     def refresh_accounts(self):
         accounts = self.store.list_accounts()
@@ -320,13 +343,22 @@ class LauncherV3(QMainWindow):
 
     def sign_in(self):
         if not session.client_id(self.settings):
-            QMessageBox.information(self, "Client ID needed", "Set the Azure client ID in Settings first.")
+            QMessageBox.information(self, "Online sign-in setup", "Set LUMEN_MS_CLIENT_ID before using Microsoft sign-in. Offline play needs no client ID after ownership is verified.")
             self.tabs.setCurrentIndex(7)
             return
         self.worker = SignInWorker(self.settings)
         self.worker.code.connect(lambda code, url: webbrowser.open(url))
         self.worker.done.connect(lambda name: self.refresh_accounts())
         self.worker.failed.connect(lambda msg: QMessageBox.warning(self, "Sign-in failed", msg))
+        self.worker.start()
+
+    def install_game(self):
+        self.save_settings()
+        self.play_status.setText("Installing Minecraft and Java...")
+        self.worker = InstallWorker(self.settings)
+        self.worker.status.connect(self.play_status.setText)
+        self.worker.done.connect(self.play_status.setText)
+        self.worker.failed.connect(lambda msg: self.play_status.setText(f"Install error: {msg}"))
         self.worker.start()
 
     def launch_game(self):
