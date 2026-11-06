@@ -1,6 +1,6 @@
 ; Inno Setup script. Per-user install (no admin rights) = smaller attack surface.
 #define AppName "Lumen Launcher"
-#define AppVersion "0.1.0"
+#define AppVersion "0.3.0"
 
 [Setup]
 AppName={#AppName}
