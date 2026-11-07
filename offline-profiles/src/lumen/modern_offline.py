@@ -18,6 +18,12 @@ from lumen.offline_launcher import OfflineLauncher
 from lumen.offline_profiles import OfflineProfileDB
 
 
+def muted_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("muted")
+    return label
+
+
 STYLE = """
 QMainWindow, QWidget { background:#0b0d10; color:#f6f1e7; font-size:13px; }
 QLabel#title { font-size:25px; font-weight:800; color:#ffffff; }
@@ -132,7 +138,7 @@ class LumenWindow(QMainWindow):
         brand = QLabel("LUMEN")
         brand.setObjectName("title")
         header.addWidget(brand)
-        header.addWidget(QLabel("  OFFLINE CLIENT", objectName="muted"))
+        header.addWidget(muted_label("  OFFLINE CLIENT"))
         header.addStretch()
         self.account_button = QPushButton()
         self.account_button.setObjectName("account")
@@ -157,9 +163,8 @@ class LumenWindow(QMainWindow):
         title = QLabel("Play locally")
         title.setObjectName("title")
         layout.addWidget(title)
-        layout.addWidget(QLabel(
-            "Prepared assets launch without Microsoft, Xbox, or downloader calls.",
-            objectName="muted",
+        layout.addWidget(muted_label(
+            "Prepared assets launch without Microsoft, Xbox, or downloader calls."
         ))
 
         card = QWidget()
@@ -185,9 +190,8 @@ class LumenWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel("Minecraft versions", objectName="title"))
-        layout.addWidget(QLabel(
-            "Choose a version and download it during the online provisioning stage.",
-            objectName="muted",
+        layout.addWidget(muted_label(
+            "Choose a version and download it during the online provisioning stage."
         ))
 
         row = QHBoxLayout()
@@ -219,9 +223,8 @@ class LumenWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel(name, objectName="title"))
-        layout.addWidget(QLabel(
-            f"{name} management is ready for the next provider integration.",
-            objectName="muted",
+        layout.addWidget(muted_label(
+            f"{name} management is ready for the next provider integration."
         ))
         layout.addStretch()
         return page
