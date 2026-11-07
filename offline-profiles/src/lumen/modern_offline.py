@@ -24,6 +24,12 @@ def muted_label(text: str) -> QLabel:
     return label
 
 
+def title_label(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("title")
+    return label
+
+
 STYLE = """
 QMainWindow, QWidget { background:#0b0d10; color:#f6f1e7; font-size:13px; }
 QLabel#title { font-size:25px; font-weight:800; color:#ffffff; }
@@ -189,7 +195,7 @@ class LumenWindow(QMainWindow):
     def versions_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("Minecraft versions", objectName="title"))
+        layout.addWidget(title_label("Minecraft versions"))
         layout.addWidget(muted_label(
             "Choose a version and download it during the online provisioning stage."
         ))
@@ -222,7 +228,7 @@ class LumenWindow(QMainWindow):
     def placeholder_tab(self, name: str):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel(name, objectName="title"))
+        layout.addWidget(title_label(name))
         layout.addWidget(muted_label(
             f"{name} management is ready for the next provider integration."
         ))
