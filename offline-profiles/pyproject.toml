@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lumen-offline-profiles"
+version = "1.0.0"
+description = "Lumen local/offline Minecraft profile utility"
+requires-python = ">=3.11"
+dependencies = ["minecraft-launcher-lib"]
+
+[project.optional-dependencies]
+gui = ["PySide6"]
+dev = ["pytest", "pyinstaller"]
+
+[project.scripts]
+lumen = "lumen.cli:main"
+lumen-gui = "lumen.ui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
