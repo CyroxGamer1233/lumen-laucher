@@ -227,6 +227,7 @@ class LumenWindow(QMainWindow):
         return page
 
     def load_local_versions(self):
+        self.refresh_installed()
         worker = VersionWorker(self.minecraft_dir)
         worker.loaded.connect(self.set_versions)
         worker.start()
@@ -239,9 +240,6 @@ class LumenWindow(QMainWindow):
             box.addItems(versions or ["1.21.1"])
             if current:
                 box.setCurrentText(current)
-
-    def load_local_versions(self):
-        self.refresh_installed()
 
     def refresh_installed(self):
         self.installed.clear()
