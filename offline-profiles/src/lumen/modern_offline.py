@@ -449,9 +449,23 @@ class LumenWindow(QMainWindow):
             profile = self.profile_db.get_active_profile()
             if self.current_instance is None:
                 raise RuntimeError("Create an instance first")
-            version = self.current_instance.version
+            version = (
+                self.current_instance.installed_version
+                or self.current_instance.version
+            )
+            instance_root = paths.data_dir() / "instances" / self.current_instance.name
+            jvm = [
+                f"-Xmx{self.current_instance.ram_mb}M",
+                f"-Xms{min(1024, self.current_instance.ram_mb)}M",
+            ]
             launcher = OfflineLauncher(self.minecraft_dir, self.profile_db)
-            launcher.launch(version, profile=profile, output=self.log.appendPlainText)
+            launcher.launch(
+                version,
+                profile=profile,
+                jvm_arguments=jvm,
+                game_directory=instance_root,
+                output=self.log.appendPlainText,
+            )
             self.log.appendPlainText(
                 f"Launching {self.current_instance.name} ({version}) as {profile.username}..."
             )
