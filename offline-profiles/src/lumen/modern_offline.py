@@ -352,12 +352,12 @@ class LumenWindow(QMainWindow):
         self.version_worker = worker
 
     def set_versions(self, versions: list):
-        for box in (self.version_box, self.home_version):
-            current = box.currentText()
-            box.clear()
-            box.addItems(versions or ["1.21.1"])
-            if current:
-                box.setCurrentText(current)
+        box = self.home_version
+        current = box.currentText()
+        box.clear()
+        box.addItems(versions or ["1.21.1"])
+        if current:
+            box.setCurrentText(current)
 
     def refresh_installed(self):
         if not hasattr(self, "installed"):
