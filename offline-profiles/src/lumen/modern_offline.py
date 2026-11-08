@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QPlainTextEdit, QSplashScreen, QTabWidget, QVBoxLayout, QWidget
+    QPlainTextEdit, QScrollArea, QSplashScreen, QTabWidget, QTextBrowser, QVBoxLayout, QWidget
 )
 
 from lumen import logging_setup, paths
@@ -101,6 +101,62 @@ class VersionWorker(QThread):
             self.failed.emit(str(error))
 
 
+class ContentDetailsDialog(QDialog):
+    def __init__(self, project: dict, download_callback, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.download_callback = download_callback
+        self.setWindowTitle(project.get("title", "Content details"))
+        self.resize(760, 560)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(title_label(project.get("title", "Content details")))
+        layout.addWidget(muted_label(
+            f'{project.get("project_type", "content").title()}  •  '
+            f'{project.get("downloads", 0):,} downloads'
+        ))
+
+        icon_url = project.get("icon_url")
+        if icon_url:
+            try:
+                with urllib.request.urlopen(icon_url, timeout=8) as response:
+                    image = QPixmap()
+                    image.loadFromData(response.read())
+                    image = image.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation)
+                    icon = QLabel()
+                    icon.setPixmap(image)
+                    layout.addWidget(icon)
+            except Exception:
+                pass
+
+        text = QTextBrowser()
+        text.setOpenExternalLinks(True)
+        description = project.get("description", "No description available.")
+        gallery = project.get("gallery", [])
+        html = f"<h3>{project.get('title', '')}</h3><p>{description}</p>"
+        if gallery:
+            html += "<p><b>Screenshots:</b> " + " • ".join(
+                item.get("title", "image") for item in gallery
+            ) + "</p>"
+        text.setHtml(html)
+        layout.addWidget(text, 1)
+
+        buttons = QHBoxLayout()
+        download = QPushButton("DOWNLOAD TO SELECTED INSTANCE")
+        download.clicked.connect(self.download)
+        buttons.addWidget(download)
+        close = QPushButton("CLOSE")
+        close.setObjectName("secondary")
+        close.clicked.connect(self.reject)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+
+    def download(self):
+        self.download_callback()
+        self.accept()
+
+
 class CatalogWorker(QThread):
     loaded = Signal(list)
     failed = Signal(str)
@@ -132,6 +188,7 @@ class CatalogTab(QWidget):
         self.version_provider = version_provider
         self.instance_provider = instance_provider
         self.catalog = ModrinthCatalog()
+        self.instance_store = InstanceStore(paths.config_path().parent / "instances.json")
         self.results_data = []
 
         layout = QVBoxLayout(self)
@@ -157,7 +214,17 @@ class CatalogTab(QWidget):
         version_row.addWidget(self.version_box, 1)
         layout.addLayout(version_row)
 
+        self.instance_box = QComboBox()
+        self.instance_box.setEditable(False)
+        for instance in self.instance_store.instances:
+            self.instance_box.addItem(instance.name)
+        instance_row = QHBoxLayout()
+        instance_row.addWidget(QLabel("Target instance"))
+        instance_row.addWidget(self.instance_box, 1)
+        layout.addLayout(instance_row)
+
         self.results = QListWidget()
+        self.results.itemDoubleClicked.connect(self.open_details)
         layout.addWidget(self.results, 1)
         self.status = muted_label("Ready")
         layout.addWidget(self.status)
@@ -190,6 +257,17 @@ class CatalogTab(QWidget):
             self.results.addItem(item)
         self.status.setText(f"{len(values)} result(s)")
 
+    def open_details(self, _item):
+        row = self.results.currentRow()
+        if row < 0 or row >= len(self.results_data):
+            return
+        try:
+            project = self.catalog.project(self.results_data[row]["project_id"])
+            dialog = ContentDetailsDialog(project, self.download_selected, self)
+            dialog.exec()
+        except Exception as error:
+            self.status.setText(str(error))
+
     def download_selected(self):
         row = self.results.currentRow()
         if row < 0 or row >= len(self.results_data):
@@ -199,17 +277,16 @@ class CatalogTab(QWidget):
             version = self.version_box.currentText().strip()
             if not version:
                 raise ValueError("Select a Minecraft version first")
-            if self.project_type == "modpack" and self.instance_provider:
-                instance = self.instance_provider()
-                if instance is None:
-                    raise RuntimeError("Create or select an instance first")
-                destination = (
-                    paths.data_dir() / "instances" / instance.name / "modpacks"
-                )
-            else:
-                destination = (
-                    Path(paths.minecraft_dir()) / "lumen-content" / self.project_type
-                )
+            instance_name = self.instance_box.currentText().strip()
+            if not instance_name:
+                raise RuntimeError("Create and select an instance first")
+            instance_root = paths.data_dir() / "instances" / instance_name
+            folder = {
+                "mod": "mods",
+                "shader": "shaderpacks",
+                "modpack": "modpacks",
+            }.get(self.project_type, self.project_type)
+            destination = instance_root / folder
             result = self.catalog.download(
                 self.results_data[row]["project_id"], version, destination
             )
