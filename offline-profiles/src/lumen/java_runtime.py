@@ -49,7 +49,7 @@ def ensure_java(
         )
 
     directory = Path(minecraft_directory)
-    info = minecraft_launcher_lib.utils.get_version_runtime_information(
+    info = minecraft_launcher_lib.runtime.get_version_runtime_information(
         version, str(directory)
     )
     if not info or not info.get("name"):
