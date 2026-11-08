@@ -27,6 +27,9 @@ class ModrinthCatalog:
         result = self._request(f"{API}/search?{params}")
         return list(result.get("hits", []))
 
+    def project(self, project_id: str) -> dict:
+        return dict(self._request(f"{API}/project/{project_id}"))
+
     def download(
         self,
         project_id: str,
