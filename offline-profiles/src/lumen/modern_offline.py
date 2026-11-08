@@ -10,12 +10,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QPlainTextEdit, QSplashScreen, QTabWidget, QVBoxLayout, QWidget
 )
 
 from lumen import logging_setup, paths
 from lumen.assets import AssetDownloader
+from lumen.catalog import ModrinthCatalog
 from lumen.offline_launcher import OfflineLauncher
 from lumen.offline_profiles import OfflineProfileDB
 
@@ -96,6 +97,92 @@ class VersionWorker(QThread):
             self.failed.emit(str(error))
 
 
+class CatalogWorker(QThread):
+    loaded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, project_type: str, query: str):
+        super().__init__()
+        self.project_type, self.query = project_type, query
+
+    def run(self):
+        try:
+            self.loaded.emit(ModrinthCatalog().search(self.project_type, self.query))
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+class CatalogTab(QWidget):
+    def __init__(self, project_type: str, version_provider, parent=None):
+        super().__init__(parent)
+        self.project_type = project_type
+        self.version_provider = version_provider
+        self.catalog = ModrinthCatalog()
+        self.results_data = []
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(title_label(project_type.title() + " browser"))
+        layout.addWidget(muted_label(
+            "Search Modrinth, inspect results, then download compatible content."
+        ))
+
+        row = QHBoxLayout()
+        self.query = QLineEdit()
+        self.query.setPlaceholderText("Search Modrinth...")
+        row.addWidget(self.query, 1)
+        search = QPushButton("SEARCH")
+        search.clicked.connect(self.search)
+        row.addWidget(search)
+        layout.addLayout(row)
+
+        self.results = QListWidget()
+        layout.addWidget(self.results, 1)
+        self.status = muted_label("Ready")
+        layout.addWidget(self.status)
+
+        self.download = QPushButton("DOWNLOAD SELECTED")
+        self.download.clicked.connect(self.download_selected)
+        layout.addWidget(self.download)
+
+    def search(self):
+        self.status.setText("Searching Modrinth...")
+        self.search_worker = CatalogWorker(self.project_type, self.query.text().strip())
+        self.search_worker.loaded.connect(self.set_results)
+        self.search_worker.failed.connect(lambda error: self.status.setText(error))
+        self.search_worker.start()
+
+    def set_results(self, values: list):
+        self.results_data = values
+        self.results.clear()
+        for value in values:
+            item = QListWidgetItem(
+                f'{value.get("title", value.get("project_id", "Unknown"))}  '
+                f'•  {value.get("description", "")[:100]}'
+            )
+            item.setToolTip(value.get("description", ""))
+            self.results.addItem(item)
+        self.status.setText(f"{len(values)} result(s)")
+
+    def download_selected(self):
+        row = self.results.currentRow()
+        if row < 0 or row >= len(self.results_data):
+            self.status.setText("Select an item first")
+            return
+        try:
+            version = self.version_provider().strip()
+            if not version:
+                raise ValueError("Select a Minecraft version first")
+            destination = (
+                Path(paths.minecraft_dir()) / "lumen-content" / self.project_type
+            )
+            result = self.catalog.download(
+                self.results_data[row]["project_id"], version, destination
+            )
+            self.status.setText(f"Downloaded {result.name}")
+        except Exception as error:
+            self.status.setText(str(error))
+
+
 class AccountDialog(QDialog):
     def __init__(self, db: OfflineProfileDB, parent=None):
         super().__init__(parent)
@@ -157,7 +244,10 @@ class LumenWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self.home_tab(), "Home")
         self.tabs.addTab(self.versions_tab(), "Versions")
-        for name in ("Mods", "Shaders", "Modpacks", "Servers", "Settings"):
+        self.tabs.addTab(CatalogTab("mod", lambda: self.home_version.currentText()), "Mods")
+        self.tabs.addTab(CatalogTab("shader", lambda: self.home_version.currentText()), "Shaders")
+        self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText()), "Modpacks")
+        for name in ("Servers", "Settings"):
             self.tabs.addTab(self.placeholder_tab(name), name)
         outer.addWidget(self.tabs)
 
