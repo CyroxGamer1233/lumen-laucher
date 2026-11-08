@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
 from lumen import paths
 from lumen.instances import Instance, InstanceStore
 from lumen.client_mod import install_client_mod
+from lumen.catalog import ModrinthCatalog
+
+CLIENT_MOD_MINECRAFT_VERSION = "1.21.1"
 
 
 class InstanceDialog(QDialog):
@@ -102,11 +105,27 @@ class InstanceInstallWorker(QThread):
                 )
             instance_root = paths.data_dir() / "instances" / self.instance.name
             if self.instance.loader == "fabric":
-                client_mod = install_client_mod(instance_root / "mods")
-                if client_mod:
-                    self.status.emit(f"Client mod installed: {client_mod.name}")
+                mods_directory = instance_root / "mods"
+                fabric_api = ModrinthCatalog().download(
+                    "fabric-api",
+                    self.instance.version,
+                    mods_directory,
+                    loader="fabric",
+                )
+                self.status.emit(f"Fabric API installed: {fabric_api.name}")
+
+                if self.instance.version == CLIENT_MOD_MINECRAFT_VERSION:
+                    client_mod = install_client_mod(mods_directory)
+                    if client_mod:
+                        self.status.emit(f"Client mod installed: {client_mod.name}")
+                    else:
+                        self.status.emit(
+                            "Client mod not found; build client-mod first"
+                        )
                 else:
-                    self.status.emit("Client mod not found; build client-mod first")
+                    self.status.emit(
+                        f"Client mod skipped: supports only {CLIENT_MOD_MINECRAFT_VERSION}"
+                    )
             self.done.emit()
         except Exception as error:
             self.failed.emit(str(error))
