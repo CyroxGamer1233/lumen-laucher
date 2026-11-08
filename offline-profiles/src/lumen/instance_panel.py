@@ -108,10 +108,11 @@ class InstancesTab(QWidget):
         title = QLabel("Instances")
         title.setObjectName("title")
         layout.addWidget(title)
-        layout.addWidget(QLabel(
-            "Create a named profile with its own version, loader, and RAM.",
-            objectName="muted",
-        ))
+        hint = QLabel(
+            "Create a named profile with its own version, loader, and RAM."
+        )
+        hint.setObjectName("muted")
+        layout.addWidget(hint)
 
         row = QHBoxLayout()
         self.list = QListWidget()
