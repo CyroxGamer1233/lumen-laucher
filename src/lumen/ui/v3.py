@@ -8,11 +8,11 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QFrame,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSlider,
+    QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
-from .. import __version__, catalog, config, logging_setup, paths, servers, skins, session
+from .. import __version__, catalog, config, paths, servers, skins, session
 
 class SignInWorker(QThread):
     code = Signal(str, str)
