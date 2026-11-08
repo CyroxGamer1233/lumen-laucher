@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import minecraft_launcher_lib
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
@@ -147,6 +148,9 @@ class InstancesTab(QWidget):
         self.play_button = QPushButton("PLAY INSTANCE")
         self.play_button.clicked.connect(self.play_selected)
         actions.addWidget(self.play_button)
+        self.open_button = QPushButton("OPEN DIRECTORY")
+        self.open_button.clicked.connect(self.open_directory)
+        actions.addWidget(self.open_button)
         actions.addStretch()
         row.addLayout(actions)
         layout.addLayout(row)
@@ -210,6 +214,15 @@ class InstancesTab(QWidget):
     def install_failed(self, error: str):
         self.install_button.setEnabled(True)
         self.status.setText(error)
+
+    def open_directory(self):
+        instance = self.current()
+        if not instance:
+            self.status.setText("Select an instance first")
+            return
+        directory = paths.data_dir() / "instances" / instance.name
+        directory.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
     def play_selected(self):
         instance = self.current()
