@@ -173,9 +173,11 @@ class InstancesTab(QWidget):
     def instance_selected(self, _row):
         instance = self.current()
         if instance:
+            installed = instance.installed_version or "not installed"
             self.details.setText(
-                f"{instance.name}\nMinecraft {instance.version} • "
-                f"{instance.loader} • {instance.ram_mb} MB RAM"
+                f"{instance.name}\\nMinecraft {instance.version} • "
+                f"{instance.loader} • {instance.ram_mb} MB RAM\\n"
+                f"Launch ID: {installed}"
             )
             if self.on_selected:
                 self.on_selected(instance)
