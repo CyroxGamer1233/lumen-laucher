@@ -12,6 +12,7 @@ class Instance:
     version: str
     loader: str = "vanilla"
     ram_mb: int = 4096
+    installed_version: str | None = None
 
 
 class InstanceStore:
