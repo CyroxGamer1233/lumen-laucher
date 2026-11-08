@@ -7,7 +7,7 @@ from PySide6.QtCore import QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -17,6 +17,33 @@ from lumen.client_mod import install_client_mod
 from lumen.catalog import ModrinthCatalog
 
 CLIENT_MOD_MINECRAFT_VERSION = "1.21.1"
+
+
+class InstallLogDialog(QDialog):
+    def __init__(self, instance: Instance, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Installing {instance.name}")
+        self.resize(720, 420)
+        layout = QVBoxLayout(self)
+        self.title = QLabel(
+            f"{instance.name}  •  Minecraft {instance.version}  •  {instance.loader}"
+        )
+        self.title.setObjectName("title")
+        layout.addWidget(self.title)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        layout.addWidget(self.log, 1)
+        self.close_button = QPushButton("CLOSE")
+        self.close_button.setEnabled(False)
+        self.close_button.clicked.connect(self.accept)
+        layout.addWidget(self.close_button)
+
+    def write(self, message: str):
+        self.log.appendPlainText(message)
+
+    def finished(self, message: str):
+        self.write(message)
+        self.close_button.setEnabled(True)
 
 
 class InstanceDialog(QDialog):
@@ -141,6 +168,7 @@ class InstancesTab(QWidget):
         )
         self.on_selected = on_selected
         self.worker = None
+        self.install_log = None
 
         layout = QVBoxLayout(self)
         title = QLabel("Instances")
@@ -219,20 +247,32 @@ class InstancesTab(QWidget):
             return
         self.install_button.setEnabled(False)
         self.status.setText("Installing...")
+        self.install_log = InstallLogDialog(instance, self)
+        self.install_log.show()
         self.worker = InstanceInstallWorker(instance, paths.minecraft_dir())
         self.worker.status.connect(self.status.setText)
+        self.worker.status.connect(self.install_log.write)
         self.worker.done.connect(lambda: self.install_finished(instance))
         self.worker.failed.connect(self.install_failed)
         self.worker.start()
 
     def install_finished(self, instance):
         self.install_button.setEnabled(True)
-        self.status.setText(f"{instance.name} is ready")
+        self.status.setText(
+            f"{instance.name} is ready: {instance.installed_version or instance.version}"
+        )
         self.store.save()
+        if self.install_log:
+            self.install_log.finished(
+                f"\nCOMPLETE\nLaunch ID: "
+                f"{instance.installed_version or instance.version}"
+            )
 
     def install_failed(self, error: str):
         self.install_button.setEnabled(True)
         self.status.setText(error)
+        if self.install_log:
+            self.install_log.finished(f"\nFAILED\n{error}")
 
     def open_directory(self):
         instance = self.current()
