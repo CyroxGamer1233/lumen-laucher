@@ -29,6 +29,7 @@ class OfflineLauncher:
         version: str,
         profile: OfflineProfile | None = None,
         jvm_arguments: list[str] | None = None,
+        game_directory: str | Path | None = None,
     ) -> list[str]:
         profile = profile or self.profiles.get_active_profile()
         version_json = (
@@ -57,6 +58,9 @@ class OfflineLauncher:
             "defaultExecutablePath": executable,
             "jvmArguments": jvm_arguments or [],
         }
+        if game_directory is not None:
+            Path(game_directory).mkdir(parents=True, exist_ok=True)
+            options["gameDirectory"] = str(Path(game_directory).expanduser())
 
         return minecraft_launcher_lib.command.get_minecraft_command(
             version, self.minecraft_directory, options
@@ -68,10 +72,13 @@ class OfflineLauncher:
         profile: OfflineProfile | None = None,
         jvm_arguments: list[str] | None = None,
         output: OutputCallback | None = None,
+        game_directory: str | Path | None = None,
     ) -> subprocess.Popen:
         process = subprocess.Popen(
-            self.build_command(version, profile, jvm_arguments),
-            cwd=self.minecraft_directory,
+            self.build_command(
+                version, profile, jvm_arguments, game_directory=game_directory
+            ),
+            cwd=Path(game_directory or self.minecraft_directory),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
