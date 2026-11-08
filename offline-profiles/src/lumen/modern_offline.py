@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 import minecraft_launcher_lib
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
@@ -108,7 +109,16 @@ class CatalogWorker(QThread):
 
     def run(self):
         try:
-            self.loaded.emit(ModrinthCatalog().search(self.project_type, self.query))
+            values = ModrinthCatalog().search(self.project_type, self.query)
+            for value in values:
+                icon_url = value.get("icon_url")
+                if icon_url:
+                    try:
+                        with urllib.request.urlopen(icon_url, timeout=8) as response:
+                            value["_icon_bytes"] = response.read()
+                    except Exception:
+                        value["_icon_bytes"] = b""
+            self.loaded.emit(values)
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -160,6 +170,11 @@ class CatalogTab(QWidget):
                 f'{value.get("title", value.get("project_id", "Unknown"))}  '
                 f'•  {value.get("description", "")[:100]}'
             )
+            icon_data = value.get("_icon_bytes", b"")
+            if icon_data:
+                image = QImage.fromData(icon_data)
+                if not image.isNull():
+                    item.setIcon(QIcon(QPixmap.fromImage(image)))
             item.setToolTip(value.get("description", ""))
             self.results.addItem(item)
         self.status.setText(f"{len(values)} result(s)")
