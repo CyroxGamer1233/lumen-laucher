@@ -8,6 +8,7 @@ from typing import Callable
 import minecraft_launcher_lib
 
 from .offline_profiles import OfflineProfile, OfflineProfileDB
+from .java_runtime import ensure_java
 
 OutputCallback = Callable[[str], None]
 
@@ -38,6 +39,13 @@ class OfflineLauncher:
                 f"{version} is not installed locally: {version_json}"
             )
 
+        executable = ensure_java(
+            version,
+            self.minecraft_directory,
+            explicit=self.java_path if self.java_path != "java" else None,
+            offline=False,
+        )
+
         options = {
             "username": profile.username,
             "uuid": profile.uuid,
@@ -45,8 +53,8 @@ class OfflineLauncher:
             "userType": profile.user_type,
             "launcherName": "Lumen Offline",
             "launcherVersion": "1.0.0",
-            "executablePath": self.java_path,
-            "defaultExecutablePath": self.java_path,
+            "executablePath": executable,
+            "defaultExecutablePath": executable,
             "jvmArguments": jvm_arguments or [],
         }
 
