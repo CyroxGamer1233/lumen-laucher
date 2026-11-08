@@ -19,6 +19,7 @@ from lumen import logging_setup, paths
 from lumen.assets import AssetDownloader
 from lumen.catalog import ModrinthCatalog
 from lumen.offline_launcher import OfflineLauncher
+from lumen.instance_panel import InstancesTab
 from lumen.offline_profiles import OfflineProfileDB
 from lumen.panels import ServersTab, SettingsTab
 
@@ -259,7 +260,7 @@ class LumenWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.home_tab(), "Home")
-        self.tabs.addTab(self.versions_tab(), "Versions")
+        self.tabs.addTab(InstancesTab(lambda instance: self.home_version.setCurrentText(instance.version)), "Instances")
         self.tabs.addTab(CatalogTab("mod", lambda: self.home_version.currentText()), "Mods")
         self.tabs.addTab(CatalogTab("shader", lambda: self.home_version.currentText()), "Shaders")
         self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText()), "Modpacks")
