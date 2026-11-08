@@ -4,12 +4,14 @@ import sys
 from pathlib import Path
 
 import minecraft_launcher_lib
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QPlainTextEdit, QTabWidget, QVBoxLayout, QWidget
+    QPlainTextEdit, QSplashScreen, QTabWidget, QVBoxLayout, QWidget
 )
 
 from lumen import logging_setup, paths
@@ -323,6 +325,22 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
+
+    pixmap = QPixmap(640, 340)
+    pixmap.fill(QColor("#0b0d10"))
+    painter = QPainter(pixmap)
+    painter.setPen(QColor("#f2b90b"))
+    painter.setFont(QFont("Consolas", 34, QFont.Weight.Bold))
+    painter.drawText(pixmap.rect(), 0x84, "LUMEN")
+    painter.setPen(QColor("#9ba4b0"))
+    painter.setFont(QFont("Consolas", 12))
+    painter.drawText(0, 225, 640, 30, 0x84, "Preparing your local Minecraft workspace...")
+    painter.end()
+    splash = QSplashScreen(pixmap)
+    splash.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+    splash.show()
+    app.processEvents()
+
     window = LumenWindow()
 
     effect = QGraphicsOpacityEffect(window)
@@ -335,6 +353,7 @@ def main() -> int:
     window._fade_animation = fade
     window.show()
     fade.start()
+    QTimer.singleShot(900, splash.close)
     return app.exec()
 
 
