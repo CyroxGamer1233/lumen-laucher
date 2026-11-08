@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import urllib.request
 from pathlib import Path
 
 import minecraft_launcher_lib
@@ -17,12 +16,17 @@ from PySide6.QtWidgets import (
 
 from lumen import logging_setup, paths
 from lumen.assets import AssetDownloader
-from lumen.catalog import ModrinthCatalog
+from lumen.catalog import ModrinthCatalog, open_url
 from lumen.offline_launcher import OfflineLauncher
 from lumen.instance_panel import InstancesTab
 from lumen.instances import InstanceStore
 from lumen.offline_profiles import OfflineProfileDB
 from lumen.panels import ServersTab, SettingsTab
+
+
+def resource_path(relative_path: str) -> Path:
+    bundle_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    return bundle_dir / relative_path
 
 
 def muted_label(text: str) -> QLabel:
@@ -119,7 +123,7 @@ class ContentDetailsDialog(QDialog):
         icon_url = project.get("icon_url")
         if icon_url:
             try:
-                with urllib.request.urlopen(icon_url, timeout=8) as response:
+                with open_url(icon_url, timeout=8) as response:
                     image = QPixmap()
                     image.loadFromData(response.read())
                     image = image.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio,
@@ -149,7 +153,7 @@ class ContentDetailsDialog(QDialog):
                 if not url:
                     continue
                 try:
-                    with urllib.request.urlopen(url, timeout=8) as response:
+                    with open_url(url, timeout=8) as response:
                         picture = QPixmap()
                         picture.loadFromData(response.read())
                         picture = picture.scaled(
@@ -194,7 +198,7 @@ class CatalogWorker(QThread):
                 icon_url = value.get("icon_url")
                 if icon_url:
                     try:
-                        with urllib.request.urlopen(icon_url, timeout=8) as response:
+                        with open_url(icon_url, timeout=8) as response:
                             value["_icon_bytes"] = response.read()
                     except Exception:
                         value["_icon_bytes"] = b""
@@ -371,6 +375,11 @@ class LumenWindow(QMainWindow):
         outer.setContentsMargins(22, 18, 22, 18)
 
         header = QHBoxLayout()
+        icon_path = resource_path("assets/lumen-app.ico")
+        if icon_path.is_file():
+            brand_icon = QLabel()
+            brand_icon.setPixmap(QIcon(str(icon_path)).pixmap(38, 38))
+            header.addWidget(brand_icon)
         brand = QLabel("LUMEN")
         brand.setObjectName("title")
         header.addWidget(brand)
@@ -584,6 +593,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
+    icon_path = resource_path("assets/lumen-app.ico")
+    app_icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
+    app.setWindowIcon(app_icon)
 
     pixmap = QPixmap(640, 340)
     pixmap.fill(QColor("#0b0d10"))
@@ -596,11 +608,13 @@ def main() -> int:
     painter.drawText(0, 225, 640, 30, 0x84, "Preparing your local Minecraft workspace...")
     painter.end()
     splash = QSplashScreen(pixmap)
+    splash.setWindowIcon(app_icon)
     splash.setWindowFlag(Qt.WindowType.FramelessWindowHint)
     splash.show()
     app.processEvents()
 
     window = LumenWindow()
+    window.setWindowIcon(app_icon)
 
     effect = QGraphicsOpacityEffect(window)
     window.setGraphicsEffect(effect)

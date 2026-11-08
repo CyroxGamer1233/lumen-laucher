@@ -47,7 +47,7 @@ jobs:
       - name: Build executable
         working-directory: offline-profiles
         run: |
-          python -m PyInstaller --noconfirm --clean --windowed --name LumenOffline --paths src --collect-all PySide6 --add-data "client-mod;client-mod" gui_entry.py
+          python -m PyInstaller --noconfirm --clean --windowed --name LumenOffline --paths src --collect-all PySide6 --collect-all truststore --icon assets/lumen-app.ico --add-data "assets/lumen-app.ico;assets" --add-data "client-mod;client-mod" gui_entry.py
 
       - name: Build Inno Setup installer
         working-directory: offline-profiles

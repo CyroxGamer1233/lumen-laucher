@@ -13,6 +13,7 @@ OutputBaseFilename=LumenOfflineSetup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\lumen-app.ico
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]

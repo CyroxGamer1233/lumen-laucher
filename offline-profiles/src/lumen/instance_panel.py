@@ -8,7 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from lumen import paths
@@ -24,17 +24,37 @@ class InstallLogDialog(QDialog):
     def __init__(self, instance: Instance, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Installing {instance.name}")
-        self.resize(720, 420)
+        self.setMinimumSize(700, 500)
+        self.resize(760, 540)
+
         layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+
         self.title = QLabel(
             f"{instance.name}  •  Minecraft {instance.version}  •  {instance.loader}"
         )
         self.title.setObjectName("title")
         layout.addWidget(self.title)
+
+        self.phase = QLabel("Preparing a secure installation...")
+        self.phase.setObjectName("muted")
+        layout.addWidget(self.phase)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setFormat("Preparing…")
+        self.progress.setFixedHeight(20)
+        layout.addWidget(self.progress)
+
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
+        self.log.setPlaceholderText("Installation steps and download status will appear here.")
+        self.log.setMaximumBlockCount(2000)
+        self.log.setStyleSheet("font-family: Consolas, 'Cascadia Mono', monospace;")
         layout.addWidget(self.log, 1)
-        self.close_button = QPushButton("CLOSE")
+
+        self.close_button = QPushButton("INSTALLING…")
         self.close_button.setEnabled(False)
         self.close_button.clicked.connect(self.accept)
         layout.addWidget(self.close_button)
@@ -42,8 +62,33 @@ class InstallLogDialog(QDialog):
     def write(self, message: str):
         self.log.appendPlainText(message)
 
-    def finished(self, message: str):
+    def set_phase(self, message: str):
+        self.phase.setText(message)
+
+    def set_progress(self, current: int, maximum: int):
+        if maximum <= 0:
+            self.progress.setRange(0, 0)
+            self.progress.setFormat("Downloading…")
+            return
+        maximum = max(1, int(maximum))
+        current = min(max(0, int(current)), maximum)
+        self.progress.setRange(0, maximum)
+        self.progress.setValue(current)
+        self.progress.setFormat("%p%")
+
+    def finished(self, message: str, success: bool):
         self.write(message)
+        self.phase.setText("Installation complete" if success else "Installation stopped")
+        if success:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
+            self.progress.setFormat("Ready to play")
+            self.close_button.setText("DONE")
+        else:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(0)
+            self.progress.setFormat("See the log for details")
+            self.close_button.setText("CLOSE")
         self.close_button.setEnabled(True)
 
 
@@ -89,6 +134,7 @@ class InstanceDialog(QDialog):
 
 class InstanceInstallWorker(QThread):
     status = Signal(str)
+    progress = Signal(int, int)
     done = Signal()
     failed = Signal(str)
 
@@ -98,10 +144,19 @@ class InstanceInstallWorker(QThread):
 
     def run(self):
         try:
+            maximum = [0]
+
+            def set_max(value):
+                maximum[0] = max(0, int(value))
+                self.progress.emit(0, maximum[0])
+
+            def set_progress(value):
+                self.progress.emit(max(0, int(value)), maximum[0])
+
             callback = {
                 "setStatus": self.status.emit,
-                "setProgress": lambda _value: None,
-                "setMax": lambda _value: None,
+                "setProgress": set_progress,
+                "setMax": set_max,
             }
             minecraft_launcher_lib.install.install_minecraft_version(
                 self.instance.version, self.directory, callback=callback
@@ -142,11 +197,13 @@ class InstanceInstallWorker(QThread):
             instance_root = paths.data_dir() / "instances" / self.instance.name
             if self.instance.loader == "fabric":
                 mods_directory = instance_root / "mods"
+                self.status.emit("Downloading Fabric API with certificate verification...")
                 fabric_api = ModrinthCatalog().download(
                     "fabric-api",
                     self.instance.version,
                     mods_directory,
                     loader="fabric",
+                    progress=lambda current, total: self.progress.emit(current, total),
                 )
                 self.status.emit(f"Fabric API installed: {fabric_api.name}")
 
@@ -260,7 +317,9 @@ class InstancesTab(QWidget):
         self.install_log.show()
         self.worker = InstanceInstallWorker(instance, paths.minecraft_dir())
         self.worker.status.connect(self.status.setText)
+        self.worker.status.connect(self.install_log.set_phase)
         self.worker.status.connect(self.install_log.write)
+        self.worker.progress.connect(self.install_log.set_progress)
         self.worker.done.connect(lambda: self.install_finished(instance))
         self.worker.failed.connect(self.install_failed)
         self.worker.start()
@@ -274,14 +333,15 @@ class InstancesTab(QWidget):
         if self.install_log:
             self.install_log.finished(
                 f"\nCOMPLETE\nLaunch ID: "
-                f"{instance.installed_version or instance.version}"
+                f"{instance.installed_version or instance.version}",
+                success=True,
             )
 
     def install_failed(self, error: str):
         self.install_button.setEnabled(True)
         self.status.setText(error)
         if self.install_log:
-            self.install_log.finished(f"\nFAILED\n{error}")
+            self.install_log.finished(f"\nFAILED\n{error}", success=False)
 
     def open_directory(self):
         instance = self.current()
