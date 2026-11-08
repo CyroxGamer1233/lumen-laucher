@@ -548,6 +548,13 @@ class LumenWindow(QMainWindow):
             profile = self.profile_db.get_active_profile()
             if self.current_instance is None:
                 raise RuntimeError("Create an instance first")
+            if (
+                self.current_instance.loader in ("fabric", "forge")
+                and not self.current_instance.installed_version
+            ):
+                raise RuntimeError(
+                    "Install this instance first so its real loader version is selected"
+                )
             version = (
                 self.current_instance.installed_version
                 or self.current_instance.version
