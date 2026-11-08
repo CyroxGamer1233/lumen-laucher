@@ -142,6 +142,28 @@ class ContentDetailsDialog(QDialog):
         text.setHtml(html)
         layout.addWidget(text, 1)
 
+        if gallery:
+            screenshots = QHBoxLayout()
+            for entry in gallery[:6]:
+                url = entry.get("url")
+                if not url:
+                    continue
+                try:
+                    with urllib.request.urlopen(url, timeout=8) as response:
+                        picture = QPixmap()
+                        picture.loadFromData(response.read())
+                        picture = picture.scaled(
+                            180, 110,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+                        image_label = QLabel()
+                        image_label.setPixmap(picture)
+                        screenshots.addWidget(image_label)
+                except Exception:
+                    continue
+            layout.addLayout(screenshots)
+
         buttons = QHBoxLayout()
         download = QPushButton("DOWNLOAD TO SELECTED INSTANCE")
         download.clicked.connect(self.download)
