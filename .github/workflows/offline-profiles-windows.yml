@@ -54,8 +54,22 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          & "C:Program Files (x86)Inno Setup 6ISCC.exe" "buildinstaller.iss"
-
+          Write-Host "PyInstaller output:"
+          Get-ChildItem -Recurse "dist\LumenOffline" | Select-Object FullName,Length
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "ISCC.exe was not found"
+          }
+          & $iscc (Join-Path $PWD "build\installer.iss")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+          if (-not (Test-Path "dist\LumenOfflineSetup.exe")) {
+            throw "Installer output was not created"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: LumenOffline-windows-installer
