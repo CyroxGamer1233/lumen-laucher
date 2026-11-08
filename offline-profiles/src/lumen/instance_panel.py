@@ -75,10 +75,15 @@ class InstanceInstallWorker(QThread):
                 self.instance.version, self.directory, callback=callback
             )
             if self.instance.loader == "fabric":
+                loader_version = minecraft_launcher_lib.fabric.get_latest_loader_version()
                 minecraft_launcher_lib.fabric.install_fabric(
                     self.instance.version,
                     self.directory,
+                    loader_version=loader_version,
                     callback=callback,
+                )
+                self.instance.installed_version = (
+                    f"fabric-loader-{loader_version}-{self.instance.version}"
                 )
             elif self.instance.loader == "forge":
                 forge_version = minecraft_launcher_lib.forge.find_forge_version(
@@ -89,8 +94,14 @@ class InstanceInstallWorker(QThread):
                 minecraft_launcher_lib.forge.install_forge_version(
                     forge_version, self.directory, callback=callback
                 )
+                self.instance.installed_version = (
+                    minecraft_launcher_lib.forge.forge_to_installed_version(
+                        forge_version
+                    )
+                )
+            instance_root = paths.data_dir() / "instances" / self.instance.name
             if self.instance.loader == "fabric":
-                client_mod = install_client_mod(self.directory / "mods")
+                client_mod = install_client_mod(instance_root / "mods")
                 if client_mod:
                     self.status.emit(f"Client mod installed: {client_mod.name}")
                 else:
