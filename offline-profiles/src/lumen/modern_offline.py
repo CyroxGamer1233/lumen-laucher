@@ -360,6 +360,8 @@ class LumenWindow(QMainWindow):
                 box.setCurrentText(current)
 
     def refresh_installed(self):
+        if not hasattr(self, "installed"):
+            return
         self.installed.clear()
         versions = self.minecraft_dir / "versions"
         if versions.exists():
