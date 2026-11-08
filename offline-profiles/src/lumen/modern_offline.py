@@ -19,6 +19,7 @@ from lumen.assets import AssetDownloader
 from lumen.catalog import ModrinthCatalog
 from lumen.offline_launcher import OfflineLauncher
 from lumen.offline_profiles import OfflineProfileDB
+from lumen.panels import ServersTab, SettingsTab
 
 
 def muted_label(text: str) -> QLabel:
@@ -247,8 +248,8 @@ class LumenWindow(QMainWindow):
         self.tabs.addTab(CatalogTab("mod", lambda: self.home_version.currentText()), "Mods")
         self.tabs.addTab(CatalogTab("shader", lambda: self.home_version.currentText()), "Shaders")
         self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText()), "Modpacks")
-        for name in ("Servers", "Settings"):
-            self.tabs.addTab(self.placeholder_tab(name), name)
+        self.tabs.addTab(ServersTab(), "Servers")
+        self.tabs.addTab(SettingsTab(), "Settings")
         outer.addWidget(self.tabs)
 
         self.refresh_account()
