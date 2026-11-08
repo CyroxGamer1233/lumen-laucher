@@ -126,10 +126,11 @@ class CatalogWorker(QThread):
 
 
 class CatalogTab(QWidget):
-    def __init__(self, project_type: str, version_provider, parent=None):
+    def __init__(self, project_type: str, version_provider, instance_provider=None, parent=None):
         super().__init__(parent)
         self.project_type = project_type
         self.version_provider = version_provider
+        self.instance_provider = instance_provider
         self.catalog = ModrinthCatalog()
         self.results_data = []
 
@@ -147,6 +148,14 @@ class CatalogTab(QWidget):
         search.clicked.connect(self.search)
         row.addWidget(search)
         layout.addLayout(row)
+
+        version_row = QHBoxLayout()
+        version_row.addWidget(QLabel("Target Minecraft version"))
+        self.version_box = QComboBox()
+        self.version_box.setEditable(True)
+        self.version_box.addItem("1.21.1")
+        version_row.addWidget(self.version_box, 1)
+        layout.addLayout(version_row)
 
         self.results = QListWidget()
         layout.addWidget(self.results, 1)
@@ -187,16 +196,30 @@ class CatalogTab(QWidget):
             self.status.setText("Select an item first")
             return
         try:
-            version = self.version_provider().strip()
+            version = self.version_box.currentText().strip()
             if not version:
                 raise ValueError("Select a Minecraft version first")
-            destination = (
-                Path(paths.minecraft_dir()) / "lumen-content" / self.project_type
-            )
+            if self.project_type == "modpack" and self.instance_provider:
+                instance = self.instance_provider()
+                if instance is None:
+                    raise RuntimeError("Create or select an instance first")
+                destination = (
+                    paths.data_dir() / "instances" / instance.name / "modpacks"
+                )
+            else:
+                destination = (
+                    Path(paths.minecraft_dir()) / "lumen-content" / self.project_type
+                )
             result = self.catalog.download(
                 self.results_data[row]["project_id"], version, destination
             )
-            self.status.setText(f"Downloaded {result.name}")
+            if self.project_type == "modpack" and result.suffix.lower() == ".mrpack":
+                minecraft_launcher_lib.mrpack.install_mrpack(
+                    result,
+                    paths.minecraft_dir(),
+                    modpack_directory=destination.parent,
+                )
+            self.status.setText(f"Downloaded and installed {result.name}")
         except Exception as error:
             self.status.setText(str(error))
 
@@ -265,7 +288,7 @@ class LumenWindow(QMainWindow):
         self.tabs.addTab(InstancesTab(self.select_instance), "Instances")
         self.tabs.addTab(CatalogTab("mod", lambda: self.home_version.currentText()), "Mods")
         self.tabs.addTab(CatalogTab("shader", lambda: self.home_version.currentText()), "Shaders")
-        self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText()), "Modpacks")
+        self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText(), lambda: self.current_instance), "Modpacks")
         self.tabs.addTab(ServersTab(), "Servers")
         self.tabs.addTab(SettingsTab(), "Settings")
         outer.addWidget(self.tabs)
