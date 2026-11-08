@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -12,6 +13,9 @@ def find_client_mod() -> Path | None:
         candidates.append(Path(configured).expanduser())
 
     here = Path(__file__).resolve()
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        candidates.append(Path(bundled) / "client-mod")
     candidates.extend([
         here.parents[3] / "client-mod" / "build" / "libs",
         Path.home() / ".lumen_launcher" / "client-mod",
