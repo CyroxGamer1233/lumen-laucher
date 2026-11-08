@@ -15,6 +15,7 @@ from lumen import paths
 from lumen.instances import Instance, InstanceStore
 from lumen.client_mod import install_client_mod
 from lumen.catalog import ModrinthCatalog
+from lumen.java_runtime import ensure_java
 
 CLIENT_MOD_MINECRAFT_VERSION = "1.21.1"
 
@@ -106,12 +107,20 @@ class InstanceInstallWorker(QThread):
                 self.instance.version, self.directory, callback=callback
             )
             if self.instance.loader == "fabric":
+                java_executable = ensure_java(
+                    self.instance.version,
+                    self.directory,
+                    offline=False,
+                    status=self.status.emit,
+                )
+                self.status.emit(f"Using Java: {java_executable}")
                 loader_version = minecraft_launcher_lib.fabric.get_latest_loader_version()
                 minecraft_launcher_lib.fabric.install_fabric(
                     self.instance.version,
                     self.directory,
                     loader_version=loader_version,
                     callback=callback,
+                    java=java_executable,
                 )
                 self.instance.installed_version = (
                     f"fabric-loader-{loader_version}-{self.instance.version}"
