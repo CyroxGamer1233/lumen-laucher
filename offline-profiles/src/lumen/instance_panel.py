@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from lumen import paths
 from lumen.instances import Instance, InstanceStore
+from lumen.client_mod import install_client_mod
 
 
 class InstanceDialog(QDialog):
@@ -88,6 +89,12 @@ class InstanceInstallWorker(QThread):
                 minecraft_launcher_lib.forge.install_forge_version(
                     forge_version, self.directory, callback=callback
                 )
+            if self.instance.loader == "fabric":
+                client_mod = install_client_mod(self.directory / "mods")
+                if client_mod:
+                    self.status.emit(f"Client mod installed: {client_mod.name}")
+                else:
+                    self.status.emit("Client mod not found; build client-mod first")
             self.done.emit()
         except Exception as error:
             self.failed.emit(str(error))
