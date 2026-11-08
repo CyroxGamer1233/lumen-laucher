@@ -13,7 +13,7 @@ def find_client_mod() -> Path | None:
 
     here = Path(__file__).resolve()
     candidates.extend([
-        here.parents[4] / "client-mod" / "build" / "libs",
+        here.parents[3] / "client-mod" / "build" / "libs",
         Path.home() / ".lumen_launcher" / "client-mod",
         here.parent / "client-mod",
     ])
