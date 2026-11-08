@@ -20,6 +20,7 @@ from lumen.assets import AssetDownloader
 from lumen.catalog import ModrinthCatalog
 from lumen.offline_launcher import OfflineLauncher
 from lumen.instance_panel import InstancesTab
+from lumen.instances import InstanceStore
 from lumen.offline_profiles import OfflineProfileDB
 from lumen.panels import ServersTab, SettingsTab
 
@@ -240,6 +241,7 @@ class LumenWindow(QMainWindow):
             Path(paths.config_path()).parent / "offline_profiles.json"
         )
         self.worker = None
+        self.current_instance = None
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -260,7 +262,7 @@ class LumenWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.home_tab(), "Home")
-        self.tabs.addTab(InstancesTab(lambda instance: self.home_version.setCurrentText(instance.version)), "Instances")
+        self.tabs.addTab(InstancesTab(self.select_instance), "Instances")
         self.tabs.addTab(CatalogTab("mod", lambda: self.home_version.currentText()), "Mods")
         self.tabs.addTab(CatalogTab("shader", lambda: self.home_version.currentText()), "Shaders")
         self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText()), "Modpacks")
@@ -269,7 +271,7 @@ class LumenWindow(QMainWindow):
         outer.addWidget(self.tabs)
 
         self.refresh_account()
-        self.load_local_versions()
+        self.refresh_instances()
 
     def home_tab(self):
         page = QWidget()
@@ -284,10 +286,10 @@ class LumenWindow(QMainWindow):
 
         card = QWidget()
         grid = QGridLayout(card)
-        grid.addWidget(QLabel("Minecraft version"), 0, 0)
+        grid.addWidget(QLabel("Instance"), 0, 0)
         self.home_version = QComboBox()
         self.home_version.setEditable(True)
-        self.home_version.addItem("1.21.1")
+        self.home_version.addItem("No instances")
         grid.addWidget(self.home_version, 0, 1)
 
         self.play_button = QPushButton("PLAY OFFLINE")
@@ -344,20 +346,21 @@ class LumenWindow(QMainWindow):
         layout.addStretch()
         return page
 
-    def load_local_versions(self):
-        self.refresh_installed()
-        worker = VersionWorker(self.minecraft_dir)
-        worker.loaded.connect(self.set_versions)
-        worker.start()
-        self.version_worker = worker
+    def refresh_instances(self):
+        store = InstanceStore(paths.config_path().parent / "instances.json")
+        self.home_version.clear()
+        if not store.instances:
+            self.home_version.addItem("No instances")
+            self.current_instance = None
+            return
+        for instance in store.instances:
+            self.home_version.addItem(instance.name)
+        self.current_instance = store.instances[0]
+        self.home_version.setCurrentText(self.current_instance.name)
 
-    def set_versions(self, versions: list):
-        box = self.home_version
-        current = box.currentText()
-        box.clear()
-        box.addItems(versions or ["1.21.1"])
-        if current:
-            box.setCurrentText(current)
+    def select_instance(self, instance):
+        self.current_instance = instance
+        self.home_version.setCurrentText(instance.name)
 
     def refresh_installed(self):
         if not hasattr(self, "installed"):
@@ -421,10 +424,14 @@ class LumenWindow(QMainWindow):
     def launch_game(self):
         try:
             profile = self.profile_db.get_active_profile()
-            version = self.home_version.currentText().strip()
+            if self.current_instance is None:
+                raise RuntimeError("Create an instance first")
+            version = self.current_instance.version
             launcher = OfflineLauncher(self.minecraft_dir, self.profile_db)
             launcher.launch(version, profile=profile, output=self.log.appendPlainText)
-            self.log.appendPlainText(f"Launching {version} as {profile.username}...")
+            self.log.appendPlainText(
+                f"Launching {self.current_instance.name} ({version}) as {profile.username}..."
+            )
         except Exception as error:
             QMessageBox.warning(self, "Cannot launch offline", str(error))
 
