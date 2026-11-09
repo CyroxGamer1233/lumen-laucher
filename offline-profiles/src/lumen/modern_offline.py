@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import minecraft_launcher_lib
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -980,10 +980,56 @@ class SkinsTab(QWidget):
         ]
 
 
+class MacTitleBar(QWidget):
+    def __init__(self, window, parent=None):
+        super().__init__(parent)
+        self.window = window
+        self.drag_offset = None
+        self.setFixedHeight(42)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 6, 10, 6)
+        layout.setSpacing(7)
+        for color, action in (("#ff5f57", self.window.close),
+                              ("#febc2e", self.window.showMinimized),
+                              ("#28c840", self.toggle_maximize)):
+            button = QPushButton()
+            button.setFixedSize(14, 14)
+            button.setStyleSheet(
+                f"QPushButton{{background:{color};border:0;border-radius:7px;padding:0;}}"
+                "QPushButton:hover{border:1px solid #ffffff;}"
+            )
+            button.clicked.connect(action)
+            layout.addWidget(button)
+        title = QLabel("LUMEN  •  OFFLINE CLIENT")
+        title.setObjectName("muted")
+        layout.addSpacing(8)
+        layout.addWidget(title)
+        layout.addStretch()
+
+    def toggle_maximize(self):
+        if self.window.isMaximized():
+            self.window.showNormal()
+        else:
+            self.window.showMaximized()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_offset = event.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, event):
+        if self.drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window.move(event.globalPosition().toPoint() - self.drag_offset)
+
+    def mouseReleaseEvent(self, event):
+        self.drag_offset = None
+
+
 class LumenWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Lumen Launcher")
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(1120, 720)
 
         self.minecraft_dir = Path(paths.minecraft_dir())
@@ -996,8 +1042,10 @@ class LumenWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(22, 18, 22, 18)
+        outer.setContentsMargins(12, 8, 12, 12)
+        root.setStyleSheet("QWidget{background:#0b0d10;border:1px solid #303841;border-radius:16px;}")
 
+        outer.addWidget(MacTitleBar(self, root))
         header = QHBoxLayout()
         icon_path = resource_path("assets/lumen-app.ico")
         if icon_path.is_file():
@@ -1243,7 +1291,7 @@ class LumenWindow(QMainWindow):
                 self.current_instance.installed_version
                 or self.current_instance.version
             )
-            instance_root = paths.instance_dir(self.current_instance.name)
+            instance_root = Path(getattr(self.current_instance, "path", "") or paths.instance_dir(self.current_instance.name))
             jvm = [
                 f"-Xmx{self.current_instance.ram_mb}M",
                 f"-Xms{min(1024, self.current_instance.ram_mb)}M",
