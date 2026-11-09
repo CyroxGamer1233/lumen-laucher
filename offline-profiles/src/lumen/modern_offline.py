@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import html
+import json
+import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import minecraft_launcher_lib
@@ -11,7 +15,8 @@ from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QPlainTextEdit, QScrollArea, QSplashScreen, QTabWidget, QTextBrowser, QVBoxLayout, QWidget
+    QFileDialog, QPlainTextEdit, QScrollArea, QSplashScreen, QStackedWidget,
+    QTextBrowser, QVBoxLayout, QWidget
 )
 
 from lumen import logging_setup, paths
@@ -19,7 +24,10 @@ from lumen.assets import AssetDownloader
 from lumen.catalog import ModrinthCatalog, open_url
 from lumen.offline_launcher import OfflineLauncher
 from lumen.instance_panel import InstancesTab
-from lumen.instances import InstanceStore
+from lumen.instances import Instance, InstanceStore
+from lumen.modpack_installer import install_modrinth_pack
+from lumen.client_mod import install_client_mod
+from lumen.java_runtime import ensure_java
 from lumen.offline_profiles import OfflineProfileDB
 from lumen.panels import ServersTab, SettingsTab
 
@@ -63,6 +71,20 @@ QComboBox, QLineEdit {
 QTabWidget::pane { border:0; }
 QTabBar::tab { background:#151a20; color:#aab3bf; padding:11px 18px; margin:2px; border-radius:6px; }
 QTabBar::tab:selected { background:#f2b90b; color:#111318; }
+QListWidget#navigation {
+    background:#11151a; border:1px solid #252d35; border-radius:12px; padding:8px;
+}
+QListWidget#navigation::item {
+    color:#c3c9cd; min-height:38px; padding:5px 12px;
+    border-radius:8px; margin:2px 0;
+}
+QListWidget#navigation::item:hover { background:#1c232a; color:#fff8e7; }
+QListWidget#navigation::item:selected {
+    background:#f2b90b; color:#171713; font-weight:800;
+}
+QWidget#downloadPanel {
+    background:#11151a; border:1px solid #3d4652; border-radius:10px;
+}
 QProgressBar { background:#151a20; border:1px solid #3d4652; border-radius:5px; text-align:center; }
 QProgressBar::chunk { background:#f2b90b; border-radius:5px; }
 """
@@ -106,80 +128,188 @@ class VersionWorker(QThread):
 
 
 class ContentDetailsDialog(QDialog):
-    def __init__(self, project: dict, download_callback, parent=None):
+    def __init__(self, project: dict, versions: list[dict], instances: list[Instance],
+                 download_callback, parent=None):
         super().__init__(parent)
         self.project = project
+        self.versions = versions
+        self.instances = instances
         self.download_callback = download_callback
         self.setWindowTitle(project.get("title", "Content details"))
-        self.resize(760, 560)
+        self.resize(820, 650)
+        self.setMinimumSize(720, 560)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(title_label(project.get("title", "Content details")))
-        layout.addWidget(muted_label(
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        heading = QHBoxLayout()
+        icon = QLabel()
+        icon_bytes = project.get("_icon_bytes", b"")
+        if icon_bytes:
+            pixmap = QPixmap()
+            pixmap.loadFromData(icon_bytes)
+            if not pixmap.isNull():
+                icon.setPixmap(pixmap.scaled(
+                    72, 72, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
+                heading.addWidget(icon)
+        title_block = QVBoxLayout()
+        title_block.addWidget(title_label(project.get("title", "Content details")))
+        title_block.addWidget(muted_label(
             f'{project.get("project_type", "content").title()}  •  '
             f'{project.get("downloads", 0):,} downloads'
         ))
+        heading.addLayout(title_block, 1)
+        layout.addLayout(heading)
 
-        icon_url = project.get("icon_url")
-        if icon_url:
-            try:
-                with open_url(icon_url, timeout=8) as response:
-                    image = QPixmap()
-                    image.loadFromData(response.read())
-                    image = image.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio,
-                                         Qt.TransformationMode.SmoothTransformation)
-                    icon = QLabel()
-                    icon.setPixmap(image)
-                    layout.addWidget(icon)
-            except Exception:
-                pass
+        details = QTextBrowser()
+        details.setOpenExternalLinks(True)
+        description = html.escape(project.get("description", "No description available."))
+        project_url = html.escape(project.get("slug", ""), quote=True)
+        if project_url:
+            description += f'<p><a href="https://modrinth.com/{project.get("project_type", "mod")}/{project_url}">Open project page</a></p>'
+        details.setHtml(f"<p>{description}</p>")
+        details.setMaximumHeight(170)
+        layout.addWidget(details)
 
-        text = QTextBrowser()
-        text.setOpenExternalLinks(True)
-        description = project.get("description", "No description available.")
+        gallery_bytes = project.get("_gallery_bytes", {})
         gallery = project.get("gallery", [])
-        html = f"<h3>{project.get('title', '')}</h3><p>{description}</p>"
         if gallery:
-            html += "<p><b>Screenshots:</b> " + " • ".join(
-                item.get("title", "image") for item in gallery
-            ) + "</p>"
-        text.setHtml(html)
-        layout.addWidget(text, 1)
-
-        if gallery:
-            screenshots = QHBoxLayout()
+            gallery_row = QHBoxLayout()
             for entry in gallery[:6]:
-                url = entry.get("url")
-                if not url:
+                image_data = gallery_bytes.get(entry.get("url"), b"")
+                if not image_data:
                     continue
-                try:
-                    with open_url(url, timeout=8) as response:
-                        picture = QPixmap()
-                        picture.loadFromData(response.read())
-                        picture = picture.scaled(
-                            180, 110,
-                            Qt.AspectRatioMode.KeepAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation,
-                        )
-                        image_label = QLabel()
-                        image_label.setPixmap(picture)
-                        screenshots.addWidget(image_label)
-                except Exception:
+                picture = QPixmap()
+                picture.loadFromData(image_data)
+                if picture.isNull():
                     continue
-            layout.addLayout(screenshots)
+                preview = QLabel()
+                preview.setPixmap(picture.scaled(
+                    180, 108, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
+                preview.setToolTip(entry.get("title", "Project screenshot"))
+                gallery_row.addWidget(preview)
+            if gallery_row.count():
+                layout.addLayout(gallery_row)
+
+        picker = QWidget()
+        picker.setObjectName("downloadPanel")
+        picker_layout = QHBoxLayout(picker)
+        picker_layout.setContentsMargins(12, 12, 12, 12)
+        picker_layout.setSpacing(10)
+
+        self.instance_box = QComboBox()
+        for instance in instances:
+            self.instance_box.addItem(instance.name, instance.name)
+        if not instances:
+            self.instance_box.addItem("Create an instance first", None)
+            self.instance_box.setEnabled(False)
+
+        supported_versions = []
+        for version in versions:
+            for game_version in version.get("game_versions", []):
+                if game_version not in supported_versions:
+                    supported_versions.append(game_version)
+        if not supported_versions:
+            supported_versions = list(dict.fromkeys(item.version for item in instances))
+        self.version_box = QComboBox()
+        self.version_box.setEditable(True)
+        self.version_box.addItems(supported_versions or ["1.21.1"])
+
+        self.loader_box = QComboBox()
+        self._loaders_for_version()
+        self.version_box.currentTextChanged.connect(self._loaders_for_version)
+        self.instance_box.currentIndexChanged.connect(self._sync_instance_defaults)
+        self._sync_instance_defaults()
+
+        for caption, combo in (
+            ("Install to", self.instance_box),
+            ("Minecraft version", self.version_box),
+            ("Loader / target type", self.loader_box),
+        ):
+            field = QVBoxLayout()
+            label = QLabel(caption)
+            label.setObjectName("muted")
+            field.addWidget(label)
+            field.addWidget(combo)
+            picker_layout.addLayout(field, 1)
+        layout.addWidget(picker)
 
         buttons = QHBoxLayout()
-        download = QPushButton("DOWNLOAD TO SELECTED INSTANCE")
-        download.clicked.connect(self.download)
-        buttons.addWidget(download)
+        buttons.addStretch()
         close = QPushButton("CLOSE")
         close.setObjectName("secondary")
         close.clicked.connect(self.reject)
         buttons.addWidget(close)
+        download = QPushButton("DOWNLOAD / INSTALL")
+        download.setEnabled(bool(instances))
+        download.clicked.connect(self.download)
+        buttons.addWidget(download)
         layout.addLayout(buttons)
 
+    def _loaders_for_version(self, _version=None):
+        version = self.version_box.currentText().strip()
+        loaders = []
+        for entry in self.versions:
+            if version and version not in entry.get("game_versions", []):
+                continue
+            for loader in entry.get("loaders", []):
+                if loader not in loaders:
+                    loaders.append(loader)
+        previous = self.loader_box.currentData()
+        self.loader_box.blockSignals(True)
+        self.loader_box.clear()
+        self.loader_box.addItem("Auto / compatible", None)
+        for loader in loaders:
+            label = {
+                "neoforge": "NeoForge",
+                "optifine": "OptiFine",
+                "iris": "Iris",
+                "minecraft": "Vanilla",
+            }.get(loader, loader.title())
+            self.loader_box.addItem(label, loader)
+        match = self.loader_box.findData(previous)
+        if match >= 0:
+            self.loader_box.setCurrentIndex(match)
+        self.loader_box.blockSignals(False)
+
+    def _sync_instance_defaults(self, *_args):
+        instance_name = self.instance_box.currentData()
+        instance = next(
+            (item for item in self._instances() if item.name == instance_name),
+            None,
+        )
+        if not instance:
+            return
+        version_index = self.version_box.findText(instance.version)
+        if version_index >= 0:
+            self.version_box.setCurrentIndex(version_index)
+        loader_index = self.loader_box.findData(instance.loader)
+        if loader_index >= 0:
+            self.loader_box.setCurrentIndex(loader_index)
+
+    def _instances(self):
+        return getattr(self, "instances", [])
+
     def download(self):
-        self.download_callback()
+        instance_name = self.instance_box.currentData()
+        version = self.version_box.currentText().strip()
+        if not instance_name:
+            QMessageBox.information(self, "Instance required", "Create or select an instance first.")
+            return
+        if not version:
+            QMessageBox.information(self, "Version required", "Choose a Minecraft version.")
+            return
+        selection = {
+            "instance_name": instance_name,
+            "minecraft_version": version,
+            "loader": self.loader_box.currentData(),
+        }
+        self.download_callback(self.project, selection)
         self.accept()
 
 
@@ -194,85 +324,344 @@ class CatalogWorker(QThread):
     def run(self):
         try:
             values = ModrinthCatalog().search(self.project_type, self.query)
-            for value in values:
-                icon_url = value.get("icon_url")
-                if icon_url:
-                    try:
-                        with open_url(icon_url, timeout=8) as response:
-                            value["_icon_bytes"] = response.read()
-                    except Exception:
-                        value["_icon_bytes"] = b""
+            def fetch_icon(value):
+                url = value.get("icon_url")
+                if not url:
+                    return value, b""
+                try:
+                    with open_url(url, timeout=8) as response:
+                        return value, response.read(3 * 1024 * 1024)
+                except Exception:
+                    return value, b""
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                for value, data in pool.map(fetch_icon, values):
+                    value["_icon_bytes"] = data
             self.loaded.emit(values)
         except Exception as error:
             self.failed.emit(str(error))
 
 
+class ProjectDetailsWorker(QThread):
+    loaded = Signal(object, object)
+    failed = Signal(str)
+
+    def __init__(self, project_id: str):
+        super().__init__()
+        self.project_id = project_id
+
+    def run(self):
+        try:
+            catalog = ModrinthCatalog()
+            project = catalog.project(self.project_id)
+            versions = catalog.list_versions(self.project_id)
+            urls = []
+            if project.get("icon_url"):
+                urls.append(project["icon_url"])
+            urls.extend(
+                entry.get("url") for entry in project.get("gallery", [])
+                if entry.get("url")
+            )
+
+            def fetch_image(url):
+                try:
+                    with open_url(url, timeout=8) as response:
+                        return url, response.read(4 * 1024 * 1024)
+                except Exception:
+                    return url, b""
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                images = dict(pool.map(fetch_image, dict.fromkeys(urls)))
+            project["_icon_bytes"] = images.get(project.get("icon_url"), b"")
+            project["_gallery_bytes"] = images
+            self.loaded.emit(project, versions)
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+class CatalogProgressDialog(QDialog):
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(620, 430)
+        self.resize(700, 500)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+        self.heading = title_label(title)
+        layout.addWidget(self.heading)
+        self.phase = muted_label("Preparing secure download...")
+        layout.addWidget(self.phase)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setFixedHeight(20)
+        layout.addWidget(self.progress)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(2000)
+        self.log.setStyleSheet("font-family: Consolas, 'Cascadia Mono', monospace;")
+        layout.addWidget(self.log, 1)
+        self.close_button = QPushButton("WORKING…")
+        self.close_button.setEnabled(False)
+        self.close_button.clicked.connect(self.accept)
+        layout.addWidget(self.close_button)
+
+    def write(self, message: str):
+        self.phase.setText(message)
+        self.log.appendPlainText(message)
+
+    def set_progress(self, current: int, maximum: int):
+        if maximum <= 0:
+            self.progress.setRange(0, 0)
+            return
+        maximum = max(1, int(maximum))
+        self.progress.setRange(0, maximum)
+        self.progress.setValue(min(max(0, int(current)), maximum))
+        self.progress.setFormat("%p%")
+
+    def finish(self, message: str, success: bool):
+        self.write(message)
+        self.close_button.setEnabled(True)
+        self.close_button.setText("DONE" if success else "CLOSE")
+        if success:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
+            self.progress.setFormat("Ready")
+        else:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(0)
+            self.progress.setFormat("Install failed")
+
+
+class CatalogInstallWorker(QThread):
+    status = Signal(str)
+    progress = Signal(int, int)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, project: dict, selection: dict, project_type: str,
+                 instance: Instance, instance_store_path: Path):
+        super().__init__()
+        self.project = project
+        self.selection = selection
+        self.project_type = project_type
+        self.instance = instance
+        self.instance_store_path = instance_store_path
+        self._max = [0]
+
+    def _set_max(self, value):
+        self._max[0] = max(0, int(value))
+        self.progress.emit(0, self._max[0])
+
+    def run(self):
+        try:
+            instance_root = paths.instance_dir(self.instance.name)
+            version = self.selection["minecraft_version"]
+            loader = self.selection.get("loader")
+            catalog = ModrinthCatalog()
+            project_id = self.project["project_id"]
+
+            if self.project_type == "modpack":
+                cache = instance_root / ".lumen" / "modpacks"
+                self.status.emit("Downloading the selected modpack...")
+                pack_file = catalog.download(
+                    project_id, version, cache, loader=loader,
+                    progress=lambda current, total: self.progress.emit(current, total),
+                )
+                self.status.emit("Installing modpack files in parallel...")
+                result = install_modrinth_pack(
+                    pack_file,
+                    paths.minecraft_dir(),
+                    instance_root,
+                    self.status.emit,
+                    self.progress.emit,
+                )
+                if result.loader == "fabric" and result.minecraft_version == "1.21.1":
+                    mods_dir = instance_root / "mods"
+                    if not any(mods_dir.glob("fabric-api-*.jar")):
+                        try:
+                            catalog.download(
+                                "fabric-api", result.minecraft_version, mods_dir,
+                                loader="fabric",
+                                progress=lambda current, total: self.progress.emit(current, total),
+                            )
+                        except Exception as error:
+                            self.status.emit(f"Fabric API was not added: {error}")
+                    install_client_mod(mods_dir)
+
+                store = InstanceStore(self.instance_store_path)
+                updated = next(
+                    (item for item in store.instances if item.name == self.instance.name),
+                    None,
+                )
+                if updated is None:
+                    raise RuntimeError("The selected instance was removed during installation")
+                updated.version = result.minecraft_version
+                updated.loader = result.loader
+                updated.installed_version = result.installed_version
+                store.save()
+                self.instance.version = updated.version
+                self.instance.loader = updated.loader
+                self.instance.installed_version = updated.installed_version
+                self.done.emit({
+                    "message": f"Installed {result.name} • {result.loader} • Minecraft {result.minecraft_version}",
+                    "instance": self.instance,
+                })
+                return
+
+            effective_loader = loader or self.instance.loader
+            if self.project_type == "mod":
+                self.status.emit(f"Preparing {effective_loader} instance...")
+                minecraft_launcher_lib.install.install_minecraft_version(
+                    version, paths.minecraft_dir()
+                )
+                loader_ids = minecraft_launcher_lib.mod_loader.list_mod_loader()
+                if effective_loader in {"vanilla", "minecraft"}:
+                    self.instance.loader = "vanilla"
+                    self.instance.version = version
+                    self.instance.installed_version = None
+                elif effective_loader in loader_ids:
+                    if (
+                        self.instance.loader != effective_loader
+                        or self.instance.version != version
+                        or not self.instance.installed_version
+                    ):
+                        java = ensure_java(
+                            version, paths.minecraft_dir(), offline=False,
+                            status=self.status.emit,
+                        )
+                        selected = minecraft_launcher_lib.mod_loader.get_mod_loader(
+                            effective_loader
+                        )
+                        loader_version = selected.get_latest_loader_version(version)
+                        self.instance.installed_version = selected.install(
+                            version,
+                            paths.minecraft_dir(),
+                            loader_version=loader_version,
+                            java=java,
+                            callback={
+                                "setStatus": self.status.emit,
+                                "setProgress": lambda current: self.progress.emit(current, self._max[0]),
+                                "setMax": self._set_max,
+                            },
+                        )
+                        self.instance.loader = effective_loader
+                        self.instance.version = version
+                    store = InstanceStore(self.instance_store_path)
+                    updated = next(
+                        (item for item in store.instances if item.name == self.instance.name),
+                        None,
+                    )
+                    if updated:
+                        updated.version = self.instance.version
+                        updated.loader = self.instance.loader
+                        updated.installed_version = self.instance.installed_version
+                        store.save()
+                elif self.instance.version != version:
+                    raise RuntimeError(
+                        f"{effective_loader} is not a supported game loader; "
+                        "choose Auto or a supported Modrinth loader."
+                    )
+
+                mods_dir = instance_root / "mods"
+                mods_dir.mkdir(parents=True, exist_ok=True)
+                if self.instance.loader == "fabric" and version == "1.21.1":
+                    if not any(mods_dir.glob("fabric-api-*.jar")):
+                        catalog.download(
+                            "fabric-api", version, mods_dir, loader="fabric",
+                            progress=lambda current, total: self.progress.emit(current, total),
+                        )
+                    install_client_mod(mods_dir)
+
+            if self.project_type == "shader" and loader == "iris":
+                if self.instance.loader not in {"fabric", "quilt", "neoforge"}:
+                    raise RuntimeError(
+                        "Iris shaders need a Fabric, Quilt, or NeoForge instance. "
+                        "Select a compatible instance first."
+                    )
+                mods_dir = instance_root / "mods"
+                mods_dir.mkdir(parents=True, exist_ok=True)
+                if not any(mods_dir.glob("iris-*.jar")):
+                    self.status.emit("Adding Iris to the selected instance...")
+                    catalog.download(
+                        "iris", version, mods_dir, loader=self.instance.loader,
+                        progress=lambda current, total: self.progress.emit(current, total),
+                    )
+
+            folder = "shaderpacks" if self.project_type == "shader" else "mods"
+            destination = instance_root / folder
+            self.status.emit(f"Downloading to {self.instance.name}/{folder}...")
+            output = catalog.download(
+                project_id, version, destination, loader=loader,
+                progress=lambda current, total: self.progress.emit(current, total),
+            )
+            if self.project_type == "shader" and loader == "optifine":
+                message = f"Installed {output.name}; this instance also needs OptiFine."
+            else:
+                message = f"Installed {output.name}"
+            self.done.emit({"message": message, "instance": self.instance if self.project_type == "mod" else None})
+        except OSError as error:
+            number = getattr(error, "winerror", None)
+            details = f"Windows error {number}" if number is not None else type(error).__name__
+            self.failed.emit(f"{details}: {error}")
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class CatalogTab(QWidget):
-    def __init__(self, project_type: str, version_provider, instance_provider=None, parent=None):
+    def __init__(self, project_type: str, on_installed=None, parent=None):
         super().__init__(parent)
         self.project_type = project_type
-        self.version_provider = version_provider
-        self.instance_provider = instance_provider
+        self.on_installed = on_installed
         self.catalog = ModrinthCatalog()
-        self.instance_store = InstanceStore(paths.config_path().parent / "instances.json")
         self.results_data = []
+        self.search_worker = None
+        self.details_worker = None
+        self.install_worker = None
+        self.progress_dialog = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(title_label(project_type.title() + " browser"))
         layout.addWidget(muted_label(
-            "Search Modrinth, inspect results, then download compatible content."
+            "Search Modrinth. Double-click a result to choose an instance, version, and loader."
         ))
 
         row = QHBoxLayout()
         self.query = QLineEdit()
         self.query.setPlaceholderText("Search Modrinth...")
+        self.query.returnPressed.connect(self.search)
         row.addWidget(self.query, 1)
-        search = QPushButton("SEARCH")
-        search.clicked.connect(self.search)
-        row.addWidget(search)
+        self.search_button = QPushButton("SEARCH")
+        self.search_button.clicked.connect(self.search)
+        row.addWidget(self.search_button)
         layout.addLayout(row)
 
-        version_row = QHBoxLayout()
-        version_row.addWidget(QLabel("Target Minecraft version"))
-        self.version_box = QComboBox()
-        self.version_box.setEditable(True)
-        self.version_box.addItem("1.21.1")
-        version_row.addWidget(self.version_box, 1)
-        layout.addLayout(version_row)
-
-        self.instance_box = QComboBox()
-        self.instance_box.setEditable(False)
-        for instance in self.instance_store.instances:
-            self.instance_box.addItem(instance.name)
-        instance_row = QHBoxLayout()
-        instance_row.addWidget(QLabel("Target instance"))
-        instance_row.addWidget(self.instance_box, 1)
-        layout.addLayout(instance_row)
-
         self.results = QListWidget()
+        self.results.setIconSize(QPixmap(48, 48).size())
         self.results.itemDoubleClicked.connect(self.open_details)
         layout.addWidget(self.results, 1)
-        self.status = muted_label("Ready")
+        self.status = muted_label("Search Modrinth to browse compatible content.")
         layout.addWidget(self.status)
 
-        self.download = QPushButton("DOWNLOAD SELECTED")
-        self.download.clicked.connect(self.download_selected)
-        layout.addWidget(self.download)
-
     def search(self):
+        self.search_button.setEnabled(False)
         self.status.setText("Searching Modrinth...")
         self.search_worker = CatalogWorker(self.project_type, self.query.text().strip())
         self.search_worker.loaded.connect(self.set_results)
-        self.search_worker.failed.connect(lambda error: self.status.setText(error))
+        self.search_worker.failed.connect(self.search_failed)
+        self.search_worker.finished.connect(lambda: self.search_button.setEnabled(True))
         self.search_worker.start()
+
+    def search_failed(self, error: str):
+        self.status.setText(f"Search failed: {error}")
 
     def set_results(self, values: list):
         self.results_data = values
         self.results.clear()
         for value in values:
             item = QListWidgetItem(
-                f'{value.get("title", value.get("project_id", "Unknown"))}  '
-                f'•  {value.get("description", "")[:100]}'
+                f'{value.get("title", value.get("project_id", "Unknown"))}\n'
+                f'{value.get("description", "")[:110]}'
             )
             icon_data = value.get("_icon_bytes", b"")
             if icon_data:
@@ -281,50 +670,70 @@ class CatalogTab(QWidget):
                     item.setIcon(QIcon(QPixmap.fromImage(image)))
             item.setToolTip(value.get("description", ""))
             self.results.addItem(item)
-        self.status.setText(f"{len(values)} result(s)")
+        self.status.setText(f"{len(values)} results • double-click one for details")
 
-    def open_details(self, _item):
-        row = self.results.currentRow()
+    def open_details(self, item):
+        row = self.results.row(item)
         if row < 0 or row >= len(self.results_data):
             return
-        try:
-            project = self.catalog.project(self.results_data[row]["project_id"])
-            dialog = ContentDetailsDialog(project, self.download_selected, self)
-            dialog.exec()
-        except Exception as error:
-            self.status.setText(str(error))
+        self.status.setText("Loading project details and screenshots...")
+        self.details_worker = ProjectDetailsWorker(
+            self.results_data[row]["project_id"]
+        )
+        self.details_worker.loaded.connect(self.show_details)
+        self.details_worker.failed.connect(
+            lambda message: self.status.setText(f"Could not open details: {message}")
+        )
+        self.details_worker.start()
 
-    def download_selected(self):
-        row = self.results.currentRow()
-        if row < 0 or row >= len(self.results_data):
-            self.status.setText("Select an item first")
+    def show_details(self, project: dict, versions: list):
+        store = InstanceStore(paths.config_path().parent / "instances.json")
+        dialog = ContentDetailsDialog(
+            project, versions, store.instances, self.start_download, self
+        )
+        self.status.setText(f"Viewing {project.get('title', 'project')}")
+        dialog.exec()
+
+    def start_download(self, project: dict, selection: dict):
+        store_path = paths.config_path().parent / "instances.json"
+        store = InstanceStore(store_path)
+        instance = next(
+            (item for item in store.instances
+             if item.name == selection.get("instance_name")),
+            None,
+        )
+        if instance is None:
+            QMessageBox.warning(self, "Instance missing", "Create or select an instance first.")
             return
-        try:
-            version = self.version_box.currentText().strip()
-            if not version:
-                raise ValueError("Select a Minecraft version first")
-            instance_name = self.instance_box.currentText().strip()
-            if not instance_name:
-                raise RuntimeError("Create and select an instance first")
-            instance_root = paths.data_dir() / "instances" / instance_name
-            folder = {
-                "mod": "mods",
-                "shader": "shaderpacks",
-                "modpack": "modpacks",
-            }.get(self.project_type, self.project_type)
-            destination = instance_root / folder
-            result = self.catalog.download(
-                self.results_data[row]["project_id"], version, destination
-            )
-            if self.project_type == "modpack" and result.suffix.lower() == ".mrpack":
-                minecraft_launcher_lib.mrpack.install_mrpack(
-                    result,
-                    paths.minecraft_dir(),
-                    modpack_directory=destination.parent,
-                )
-            self.status.setText(f"Downloaded and installed {result.name}")
-        except Exception as error:
-            self.status.setText(str(error))
+        self.progress_dialog = CatalogProgressDialog(
+            f"Installing {project.get('title', 'content')}", self
+        )
+        self.install_worker = CatalogInstallWorker(
+            project,
+            selection,
+            self.project_type,
+            instance,
+            store_path,
+        )
+        self.install_worker.status.connect(self.progress_dialog.write)
+        self.install_worker.progress.connect(self.progress_dialog.set_progress)
+        self.install_worker.done.connect(self.install_succeeded)
+        self.install_worker.failed.connect(self.install_failed)
+        self.install_worker.start()
+        self.progress_dialog.show()
+
+    def install_succeeded(self, result: dict):
+        message = result["message"]
+        self.status.setText(message)
+        if self.progress_dialog:
+            self.progress_dialog.finish(message, success=True)
+        if result.get("instance") and self.on_installed:
+            self.on_installed(result["instance"])
+
+    def install_failed(self, error: str):
+        self.status.setText(f"Install failed: {error}")
+        if self.progress_dialog:
+            self.progress_dialog.finish(f"\nFAILED\n{error}", success=False)
 
 
 class AccountDialog(QDialog):
@@ -354,6 +763,187 @@ class AccountDialog(QDialog):
             QMessageBox.warning(self, "Invalid account", str(error))
             return
         super().accept()
+
+
+class SkinsTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.profile = None
+        self.pending_image = None
+        self.skin_directory = paths.data_dir() / "skins"
+        self.settings_path = paths.config_path().parent / "skin_models.json"
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.addWidget(title_label("Local skins"))
+        layout.addWidget(muted_label(
+            "Choose a 64×64 PNG skin for your offline profile. "
+            "In-game skin rendering is bundled with Lumen Fabric 1.21.1."
+        ))
+
+        card = QWidget()
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(18)
+        card.setStyleSheet(
+            "background:#13171c;border:1px solid #2c333c;border-radius:12px;"
+        )
+
+        self.preview = QLabel("Choose a skin image")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setFixedSize(220, 220)
+        self.preview.setStyleSheet(
+            "background:#0b0d10;border:1px solid #3d4652;border-radius:10px;"
+        )
+        card_layout.addWidget(self.preview)
+
+        controls = QVBoxLayout()
+        self.profile_label = QLabel("No offline account selected")
+        self.profile_label.setObjectName("title")
+        controls.addWidget(self.profile_label)
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(muted_label("Player model"))
+        self.model_box = QComboBox()
+        self.model_box.addItem("Classic (wide)", "wide")
+        self.model_box.addItem("Slim (Alex)", "slim")
+        model_row.addWidget(self.model_box, 1)
+        controls.addLayout(model_row)
+
+        self.choose_button = QPushButton("CHOOSE PNG SKIN")
+        self.choose_button.clicked.connect(self.choose_skin)
+        controls.addWidget(self.choose_button)
+        self.apply_button = QPushButton("APPLY TO OFFLINE ACCOUNT")
+        self.apply_button.setEnabled(False)
+        self.apply_button.clicked.connect(self.apply_skin)
+        controls.addWidget(self.apply_button)
+        self.clear_button = QPushButton("REMOVE LOCAL SKIN")
+        self.clear_button.setObjectName("secondary")
+        self.clear_button.clicked.connect(self.remove_skin)
+        controls.addWidget(self.clear_button)
+        self.status = muted_label("The skin is stored locally on this computer.")
+        self.status.setWordWrap(True)
+        controls.addWidget(self.status)
+        controls.addStretch()
+        card_layout.addLayout(controls, 1)
+
+        layout.addWidget(card)
+        layout.addStretch()
+        self.set_profile(None)
+
+    def _settings(self) -> dict:
+        try:
+            value = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {}
+
+    def _skin_path(self):
+        if not self.profile:
+            return None
+        return self.skin_directory / f"{self.profile.uuid}.png"
+
+    def set_profile(self, profile):
+        self.profile = profile
+        self.pending_image = None
+        self.apply_button.setEnabled(False)
+        if not profile:
+            self.profile_label.setText("No offline account selected")
+            self.preview.setPixmap(QPixmap())
+            self.preview.setText("Add an offline account first")
+            self.status.setText("Skins are saved per offline account.")
+            return
+
+        self.profile_label.setText(profile.username)
+        model = self._settings().get(profile.uuid, "wide")
+        index = self.model_box.findData(model)
+        self.model_box.setCurrentIndex(index if index >= 0 else 0)
+        path = self._skin_path()
+        if path and path.is_file():
+            self._show_image(QImage(str(path)))
+            self.status.setText(f"Local skin ready for {profile.username}.")
+        else:
+            self.preview.setPixmap(QPixmap())
+            self.preview.setText("No skin selected")
+            self.status.setText("Choose a 64×64 PNG skin to use with this profile.")
+
+    def _show_image(self, image: QImage):
+        pixmap = QPixmap.fromImage(image)
+        self.preview.setPixmap(pixmap.scaled(
+            192, 192, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation,
+        ))
+        self.preview.setText("")
+
+    def choose_skin(self):
+        if not self.profile:
+            QMessageBox.information(self, "Offline account needed", "Add an offline account first.")
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Choose a Minecraft skin", "", "PNG skin images (*.png)"
+        )
+        if not filename:
+            return
+        image = QImage(filename)
+        if image.isNull() or image.width() != 64 or image.height() != 64:
+            QMessageBox.warning(
+                self, "Unsupported skin image",
+                "Choose a valid 64×64 PNG skin image.",
+            )
+            return
+        self.pending_image = image
+        self._show_image(image)
+        self.apply_button.setEnabled(True)
+        self.status.setText(Path(filename).name + " is ready to apply.")
+
+    def apply_skin(self):
+        if not self.profile or self.pending_image is None:
+            return
+        destination = self._skin_path()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not self.pending_image.save(str(destination), "PNG"):
+            self.status.setText("Could not save the skin image.")
+            return
+        values = self._settings()
+        values[self.profile.uuid] = self.model_box.currentData()
+        self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        self.settings_path.write_text(
+            json.dumps(values, indent=2), encoding="utf-8"
+        )
+        self.pending_image = None
+        self.apply_button.setEnabled(False)
+        self.status.setText(
+            "Skin applied locally. Launch a Fabric 1.21.1 instance to see it in-game."
+        )
+
+    def remove_skin(self):
+        if not self.profile:
+            return
+        path = self._skin_path()
+        if path and path.exists():
+            answer = QMessageBox.question(
+                self, "Remove local skin",
+                f"Remove the saved skin for {self.profile.username}?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            path.unlink(missing_ok=True)
+        values = self._settings()
+        values.pop(self.profile.uuid, None)
+        self.settings_path.write_text(json.dumps(values, indent=2), encoding="utf-8")
+        self.set_profile(self.profile)
+        self.status.setText("Local skin removed.")
+
+    def jvm_arguments(self, profile) -> list[str]:
+        path = paths.data_dir() / "skins" / f"{profile.uuid}.png"
+        if not path.is_file():
+            return []
+        model = self._settings().get(profile.uuid, "wide")
+        return [
+            f"-Dlumen.skin.path={path}",
+            f"-Dlumen.skin.uuid={profile.uuid}",
+            f"-Dlumen.skin.model={model}",
+        ]
 
 
 class LumenWindow(QMainWindow):
@@ -391,15 +981,38 @@ class LumenWindow(QMainWindow):
         header.addWidget(self.account_button)
         outer.addLayout(header)
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.home_tab(), "Home")
-        self.tabs.addTab(InstancesTab(self.select_instance), "Instances")
-        self.tabs.addTab(CatalogTab("mod", lambda: self.home_version.currentText()), "Mods")
-        self.tabs.addTab(CatalogTab("shader", lambda: self.home_version.currentText()), "Shaders")
-        self.tabs.addTab(CatalogTab("modpack", lambda: self.home_version.currentText(), lambda: self.current_instance), "Modpacks")
-        self.tabs.addTab(ServersTab(), "Servers")
-        self.tabs.addTab(SettingsTab(), "Settings")
-        outer.addWidget(self.tabs)
+        self.instances_tab = InstancesTab(self.select_instance)
+        self.mods_tab = CatalogTab("mod", self.catalog_installed)
+        self.shaders_tab = CatalogTab("shader", self.catalog_installed)
+        self.modpacks_tab = CatalogTab("modpack", self.catalog_installed)
+        self.servers_tab = ServersTab()
+        self.skins_tab = SkinsTab()
+        self.settings_tab = SettingsTab()
+
+        shell = QHBoxLayout()
+        shell.setSpacing(14)
+        self.navigation = QListWidget()
+        self.navigation.setObjectName("navigation")
+        self.navigation.setFixedWidth(178)
+        self.page_stack = QStackedWidget()
+        pages = [
+            ("HOME", self.home_tab()),
+            ("INSTANCES", self.instances_tab),
+            ("MODS", self.mods_tab),
+            ("SHADERS", self.shaders_tab),
+            ("MODPACKS", self.modpacks_tab),
+            ("SERVERS", self.servers_tab),
+            ("SKINS", self.skins_tab),
+            ("SETTINGS", self.settings_tab),
+        ]
+        for label, page in pages:
+            self.navigation.addItem(QListWidgetItem(label))
+            self.page_stack.addWidget(page)
+        self.navigation.currentRowChanged.connect(self.page_stack.setCurrentIndex)
+        self.navigation.setCurrentRow(0)
+        shell.addWidget(self.navigation)
+        shell.addWidget(self.page_stack, 1)
+        outer.addLayout(shell, 1)
 
         self.refresh_account()
         self.refresh_instances()
@@ -421,6 +1034,7 @@ class LumenWindow(QMainWindow):
         self.home_version = QComboBox()
         self.home_version.setEditable(True)
         self.home_version.addItem("No instances")
+        self.home_version.currentTextChanged.connect(self.home_instance_changed)
         grid.addWidget(self.home_version, 0, 1)
 
         self.play_button = QPushButton("PLAY OFFLINE")
@@ -477,21 +1091,45 @@ class LumenWindow(QMainWindow):
         layout.addStretch()
         return page
 
-    def refresh_instances(self):
-        store = InstanceStore(paths.config_path().parent / "instances.json")
+    def refresh_instances(self, preferred_name=None):
+        self.instances_tab.refresh()
+        store = self.instances_tab.store
+        self.home_version.blockSignals(True)
         self.home_version.clear()
+        for instance in store.instances:
+            self.home_version.addItem(instance.name)
         if not store.instances:
             self.home_version.addItem("No instances")
             self.current_instance = None
-            return
-        for instance in store.instances:
-            self.home_version.addItem(instance.name)
-        self.current_instance = store.instances[0]
-        self.home_version.setCurrentText(self.current_instance.name)
+        else:
+            wanted = preferred_name or (
+                self.current_instance.name if self.current_instance else None
+            )
+            index = next(
+                (i for i, instance in enumerate(store.instances) if instance.name == wanted),
+                0,
+            )
+            self.home_version.setCurrentIndex(index)
+            self.current_instance = store.instances[index]
+        self.home_version.blockSignals(False)
+
+    def home_instance_changed(self, name: str):
+        store = InstanceStore(paths.config_path().parent / "instances.json")
+        self.current_instance = next(
+            (item for item in store.instances if item.name == name), None
+        )
 
     def select_instance(self, instance):
         self.current_instance = instance
-        self.home_version.setCurrentText(instance.name)
+        index = self.home_version.findText(instance.name)
+        if index >= 0:
+            self.home_version.setCurrentIndex(index)
+
+    def catalog_installed(self, instance):
+        self.refresh_instances(preferred_name=instance.name)
+        self.log.appendPlainText(
+            f"Updated instance {instance.name}: {instance.loader} {instance.version}"
+        )
 
     def refresh_installed(self):
         if not hasattr(self, "installed"):
@@ -508,7 +1146,10 @@ class LumenWindow(QMainWindow):
             profile = self.profile_db.get_active_profile()
             self.account_button.setText(f"●  {profile.username}  •  OFFLINE")
         except RuntimeError:
+            profile = None
             self.account_button.setText("＋  ADD OFFLINE ACCOUNT")
+        if hasattr(self, "skins_tab"):
+            self.skins_tab.set_profile(profile)
 
     def manage_account(self):
         dialog = AccountDialog(self.profile_db, self)
@@ -558,7 +1199,7 @@ class LumenWindow(QMainWindow):
             if self.current_instance is None:
                 raise RuntimeError("Create an instance first")
             if (
-                self.current_instance.loader in ("fabric", "forge")
+                self.current_instance.loader != "vanilla"
                 and not self.current_instance.installed_version
             ):
                 raise RuntimeError(
@@ -568,11 +1209,12 @@ class LumenWindow(QMainWindow):
                 self.current_instance.installed_version
                 or self.current_instance.version
             )
-            instance_root = paths.data_dir() / "instances" / self.current_instance.name
+            instance_root = paths.instance_dir(self.current_instance.name)
             jvm = [
                 f"-Xmx{self.current_instance.ram_mb}M",
                 f"-Xms{min(1024, self.current_instance.ram_mb)}M",
             ]
+            jvm.extend(self.skins_tab.jvm_arguments(profile))
             launcher = OfflineLauncher(self.minecraft_dir, self.profile_db)
             launcher.launch(
                 version,

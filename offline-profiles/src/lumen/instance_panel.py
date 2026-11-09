@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import minecraft_launcher_lib
@@ -16,6 +17,7 @@ from lumen.instances import Instance, InstanceStore
 from lumen.client_mod import install_client_mod
 from lumen.catalog import ModrinthCatalog
 from lumen.java_runtime import ensure_java
+from lumen.paths import instance_dir
 
 CLIENT_MOD_MINECRAFT_VERSION = "1.21.1"
 
@@ -101,7 +103,7 @@ class InstanceDialog(QDialog):
         self.name.setPlaceholderText("My Fabric Profile")
         self.version = QLineEdit("1.21.1")
         self.loader = QComboBox()
-        self.loader.addItems(["vanilla", "fabric", "forge"])
+        self.loader.addItems(["vanilla", "fabric", "forge", "neoforge", "quilt"])
         self.ram = QSpinBox()
         self.ram.setRange(1024, 32768)
         self.ram.setSingleStep(512)
@@ -120,11 +122,25 @@ class InstanceDialog(QDialog):
         form.addRow(buttons)
 
     def accept(self):
-        if not self.name.text().strip() or not self.version.text().strip():
+        name = self.name.text().strip()
+        if not name or not self.version.text().strip():
             QMessageBox.warning(self, "Incomplete", "Name and version are required")
             return
+        reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                    *(f"LPT{i}" for i in range(1, 10))}
+        if (
+            not re.fullmatch(r"[A-Za-z0-9 _.-]{1,48}", name)
+            or name.endswith((".", " "))
+            or name.split(".", 1)[0].upper() in reserved
+        ):
+            QMessageBox.warning(
+                self, "Invalid name",
+                "Use up to 48 letters, numbers, spaces, dots, dashes, or underscores. "
+                "Avoid Windows reserved names.",
+            )
+            return
         self.instance = Instance(
-            self.name.text().strip(),
+            name,
             self.version.text().strip(),
             self.loader.currentText(),
             self.ram.value(),
@@ -161,60 +177,52 @@ class InstanceInstallWorker(QThread):
             minecraft_launcher_lib.install.install_minecraft_version(
                 self.instance.version, self.directory, callback=callback
             )
-            if self.instance.loader == "fabric":
+
+            if self.instance.loader == "vanilla":
+                self.instance.installed_version = None
+            else:
+                self.status.emit(f"Preparing Java for {self.instance.loader}...")
                 java_executable = ensure_java(
                     self.instance.version,
                     self.directory,
                     offline=False,
                     status=self.status.emit,
                 )
-                self.status.emit(f"Using Java: {java_executable}")
-                loader_version = minecraft_launcher_lib.fabric.get_latest_loader_version()
-                minecraft_launcher_lib.fabric.install_fabric(
+                loader = minecraft_launcher_lib.mod_loader.get_mod_loader(
+                    self.instance.loader
+                )
+                loader_version = loader.get_latest_loader_version(self.instance.version)
+                self.status.emit(
+                    f"Installing {loader.get_name()} {loader_version}..."
+                )
+                self.instance.installed_version = loader.install(
                     self.instance.version,
                     self.directory,
                     loader_version=loader_version,
                     callback=callback,
                     java=java_executable,
                 )
-                self.instance.installed_version = (
-                    f"fabric-loader-{loader_version}-{self.instance.version}"
-                )
-            elif self.instance.loader == "forge":
-                forge_version = minecraft_launcher_lib.forge.find_forge_version(
-                    self.instance.version
-                )
-                if not forge_version:
-                    raise RuntimeError("No Forge build is available for this version")
-                minecraft_launcher_lib.forge.install_forge_version(
-                    forge_version, self.directory, callback=callback
-                )
-                self.instance.installed_version = (
-                    minecraft_launcher_lib.forge.forge_to_installed_version(
-                        forge_version
-                    )
-                )
-            instance_root = paths.data_dir() / "instances" / self.instance.name
+
             if self.instance.loader == "fabric":
-                mods_directory = instance_root / "mods"
-                self.status.emit("Downloading Fabric API with certificate verification...")
-                fabric_api = ModrinthCatalog().download(
-                    "fabric-api",
-                    self.instance.version,
-                    mods_directory,
-                    loader="fabric",
-                    progress=lambda current, total: self.progress.emit(current, total),
-                )
-                self.status.emit(f"Fabric API installed: {fabric_api.name}")
+                mods_directory = instance_dir(self.instance.name) / "mods"
+                mods_directory.mkdir(parents=True, exist_ok=True)
+                if not any(mods_directory.glob("fabric-api-*.jar")):
+                    self.status.emit("Downloading Fabric API...")
+                    fabric_api = ModrinthCatalog().download(
+                        "fabric-api",
+                        self.instance.version,
+                        mods_directory,
+                        loader="fabric",
+                        progress=lambda current, total: self.progress.emit(current, total),
+                    )
+                    self.status.emit(f"Fabric API installed: {fabric_api.name}")
 
                 if self.instance.version == CLIENT_MOD_MINECRAFT_VERSION:
                     client_mod = install_client_mod(mods_directory)
                     if client_mod:
                         self.status.emit(f"Client mod installed: {client_mod.name}")
                     else:
-                        self.status.emit(
-                            "Client mod not found; build client-mod first"
-                        )
+                        self.status.emit("Client mod not found; build client-mod first")
                 else:
                     self.status.emit(
                         f"Client mod skipped: supports only {CLIENT_MOD_MINECRAFT_VERSION}"
@@ -277,6 +285,7 @@ class InstancesTab(QWidget):
         self.refresh()
 
     def refresh(self):
+        self.store = InstanceStore(self.store.path)
         self.list.clear()
         for instance in self.store.instances:
             self.list.addItem(QListWidgetItem(
@@ -348,7 +357,7 @@ class InstancesTab(QWidget):
         if not instance:
             self.status.setText("Select an instance first")
             return
-        directory = paths.data_dir() / "instances" / instance.name
+        directory = instance_dir(instance.name)
         directory.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 

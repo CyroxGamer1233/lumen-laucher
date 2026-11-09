@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import ssl
+import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -12,14 +13,11 @@ import truststore
 
 
 API = "https://api.modrinth.com/v2"
-
-# Use the operating system's trusted roots (including Windows' certificate store).
-# Certificate verification stays enabled; this also supports enterprise-installed CAs.
 TLS_CONTEXT = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
 def open_url(url: str | urllib.request.Request, timeout: float = 20):
-    """Open HTTPS resources with the native system trust store."""
+    """Open HTTPS resources with the operating system's verified CA store."""
     return urllib.request.urlopen(url, timeout=timeout, context=TLS_CONTEXT)
 
 
@@ -44,42 +42,70 @@ class ModrinthCatalog:
     def project(self, project_id: str) -> dict:
         return dict(self._request(f"{API}/project/{project_id}"))
 
+    def list_versions(self, project_id: str) -> list[dict]:
+        params = urllib.parse.urlencode({"limit": 100, "include_changelog": "false"})
+        return list(self._request(f"{API}/project/{project_id}/version?{params}"))
+
     def download(
         self,
         project_id: str,
         minecraft_version: str,
         destination: str | Path,
-        loader: str = "fabric",
+        loader: str | None = None,
         progress: Callable[[int, int], None] | None = None,
     ) -> Path:
-        params = urllib.parse.urlencode({
+        filters = {
             "game_versions": json.dumps([minecraft_version]),
-            "loaders": json.dumps([loader]),
             "limit": 1,
-        })
-        versions = self._request(f"{API}/project/{project_id}/version?{params}")
+            "include_changelog": "false",
+        }
+        if loader:
+            filters["loaders"] = json.dumps([loader])
+        versions = self._request(
+            f"{API}/project/{project_id}/version?{urllib.parse.urlencode(filters)}"
+        )
         if not versions:
-            raise RuntimeError("No compatible file was found for this version")
+            compatible_loader = loader or "compatible loaders"
+            raise RuntimeError(
+                f"No {compatible_loader} file supports Minecraft {minecraft_version}"
+            )
 
         version = versions[0]
-        primary = next(
-            (file for file in version["files"] if file.get("primary")),
-            version["files"][0],
-        )
+        files = version.get("files", [])
+        if not files:
+            raise RuntimeError("The selected Modrinth version has no downloadable files")
+        primary = next((item for item in files if item.get("primary")), files[0])
 
         target = Path(destination)
         target.mkdir(parents=True, exist_ok=True)
-        output = target / Path(primary["filename"]).name
-        temporary = output.with_name(output.name + ".part")
+        filename = Path(primary["filename"]).name
+        if not filename or filename in {".", ".."}:
+            raise RuntimeError("Modrinth returned an invalid file name")
+        output = target / filename
 
         hashes = primary.get("hashes", {})
-        algorithm = next((name for name in ("sha512", "sha1") if hashes.get(name)), None)
-        digest = hashlib.new(algorithm) if algorithm else None
-        request = urllib.request.Request(primary["url"], headers=self.headers)
+        algorithm = next(
+            (name for name in ("sha512", "sha1") if hashes.get(name)),
+            None,
+        )
+        expected_hash = hashes.get(algorithm) if algorithm else None
+        if output.is_file() and expected_hash:
+            existing = hashlib.new(algorithm, output.read_bytes()).hexdigest()
+            if existing.lower() == expected_hash.lower():
+                size = output.stat().st_size
+                if progress:
+                    progress(size, size)
+                return output
 
+        request = urllib.request.Request(primary["url"], headers=self.headers)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=filename + ".", suffix=".part", dir=target
+        )
+        temporary = Path(temporary_name)
+        digest = hashlib.new(algorithm) if algorithm else None
         try:
-            with open_url(request, timeout=60) as response, temporary.open("wb") as sink:
-                total = int(response.headers.get("Content-Length", "0") or 0)
+            with open_url(request, timeout=60) as response, open(fd, "wb", closefd=True) as sink:
+                total = int(response.headers.get("Content-Length", 0) or primary.get("size", 0))
                 current = 0
                 if progress:
                     progress(current, total)
@@ -94,9 +120,8 @@ class ModrinthCatalog:
                     if progress:
                         progress(current, total)
 
-            if digest and digest.hexdigest().lower() != hashes[algorithm].lower():
+            if digest and digest.hexdigest().lower() != expected_hash.lower():
                 raise RuntimeError(f"Downloaded file failed its {algorithm} integrity check")
-
             temporary.replace(output)
             return output
         except Exception:
