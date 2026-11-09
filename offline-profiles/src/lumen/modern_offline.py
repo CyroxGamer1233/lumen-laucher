@@ -205,6 +205,9 @@ class ContentDetailsDialog(QDialog):
         self.instance_box = QComboBox()
         for instance in instances:
             self.instance_box.addItem(instance.name, instance.name)
+        self.new_instance_name = QLineEdit()
+        self.new_instance_name.setPlaceholderText("New modpack instance name")
+        self.new_instance_name.setText(project.get("title", "New Modpack"))
         if not instances:
             self.instance_box.addItem("Create an instance first", None)
             self.instance_box.setEnabled(False)
@@ -238,6 +241,14 @@ class ContentDetailsDialog(QDialog):
             field.addWidget(combo)
             picker_layout.addLayout(field, 1)
         layout.addWidget(picker)
+        if self.project.get("project_type") == "modpack":
+            self.instance_box.setVisible(False)
+            name_field = QVBoxLayout()
+            name_field.addWidget(QLabel("New instance name"))
+            name_field.addWidget(self.new_instance_name)
+            picker_layout.addLayout(name_field, 1)
+        else:
+            self.new_instance_name.setVisible(False)
 
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -246,7 +257,7 @@ class ContentDetailsDialog(QDialog):
         close.clicked.connect(self.reject)
         buttons.addWidget(close)
         download = QPushButton("DOWNLOAD / INSTALL")
-        download.setEnabled(bool(instances))
+        download.setEnabled(bool(instances) or self.project.get("project_type") == "modpack")
         download.clicked.connect(self.download)
         buttons.addWidget(download)
         layout.addLayout(buttons)
@@ -297,6 +308,8 @@ class ContentDetailsDialog(QDialog):
 
     def download(self):
         instance_name = self.instance_box.currentData()
+        if self.project.get("project_type") == "modpack":
+            instance_name = self.new_instance_name.text().strip() or self.project.get("title", "New Modpack")
         version = self.version_box.currentText().strip()
         if not instance_name:
             QMessageBox.information(self, "Instance required", "Create or select an instance first.")
@@ -455,11 +468,24 @@ class CatalogInstallWorker(QThread):
 
     def run(self):
         try:
-            instance_root = paths.instance_dir(self.instance.name)
             version = self.selection["minecraft_version"]
             loader = self.selection.get("loader")
             catalog = ModrinthCatalog()
-            project_id = self.project["project_id"]
+            project_id = (self.project.get("project_id") or self.project.get("id") or self.project.get("slug"))
+            if not project_id:
+                raise RuntimeError("This result has no valid Modrinth project ID or slug")
+            if self.project_type == "modpack":
+                store = InstanceStore(self.instance_store_path)
+                base_name = self.selection.get("instance_name") or self.project.get("title", "Modpack")
+                existing = {item.name for item in store.instances}
+                name = base_name
+                counter = 2
+                while name in existing:
+                    name = f"{base_name} {counter}"
+                    counter += 1
+                self.instance = Instance(name=name, version=version, loader=loader or "fabric", ram_mb=4096)
+                store.add(self.instance)
+            instance_root = paths.instance_dir(self.instance.name)
 
             if self.project_type == "modpack":
                 cache = instance_root / ".lumen" / "modpacks"
@@ -688,6 +714,7 @@ class CatalogTab(QWidget):
 
     def show_details(self, project: dict, versions: list):
         store = InstanceStore(paths.config_path().parent / "instances.json")
+        project["project_type"] = self.project_type
         dialog = ContentDetailsDialog(
             project, versions, store.instances, self.start_download, self
         )
@@ -702,6 +729,13 @@ class CatalogTab(QWidget):
              if item.name == selection.get("instance_name")),
             None,
         )
+        if instance is None and self.project_type == "modpack":
+            requested = selection.get("instance_name") or project.get("title", "New Modpack")
+            instance = Instance(
+                name=requested, version=selection.get("minecraft_version", "1.21.1"),
+                loader=selection.get("loader") or "fabric", ram_mb=4096,
+            )
+            store.add(instance)
         if instance is None:
             QMessageBox.warning(self, "Instance missing", "Create or select an instance first.")
             return

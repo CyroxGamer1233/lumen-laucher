@@ -39,12 +39,19 @@ class ModrinthCatalog:
         result = self._request(f"{API}/search?{params}")
         return list(result.get("hits", []))
 
+    @staticmethod
+    def _project_key(project_id: str) -> str:
+        value = str(project_id or "").strip()
+        if not value:
+            raise ValueError("Modrinth result did not include a project ID or slug")
+        return urllib.parse.quote(value, safe="")
+
     def project(self, project_id: str) -> dict:
-        return dict(self._request(f"{API}/project/{project_id}"))
+        return dict(self._request(f"{API}/project/{self._project_key(project_id)}"))
 
     def list_versions(self, project_id: str) -> list[dict]:
         params = urllib.parse.urlencode({"limit": 100, "include_changelog": "false"})
-        return list(self._request(f"{API}/project/{project_id}/version?{params}"))
+        return list(self._request(f"{API}/project/{self._project_key(project_id)}/version?{params}"))
 
     def download(
         self,
@@ -62,7 +69,7 @@ class ModrinthCatalog:
         if loader:
             filters["loaders"] = json.dumps([loader])
         versions = self._request(
-            f"{API}/project/{project_id}/version?{urllib.parse.urlencode(filters)}"
+            f"{API}/project/{self._project_key(project_id)}/version?{urllib.parse.urlencode(filters)}"
         )
         if not versions:
             compatible_loader = loader or "compatible loaders"
