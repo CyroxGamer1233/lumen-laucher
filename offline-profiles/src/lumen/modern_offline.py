@@ -61,6 +61,9 @@ QPushButton {
     padding:9px 16px; font-weight:800;
 }
 QPushButton:hover { background:#ffd34d; }
+QPushButton#primary { background:#f2b90b; color:#111318; min-height:34px; font-weight:800; }
+QPushButton#primary:hover { background:#ffd34d; }
+QPushButton#primary:disabled { background:#8b6908; color:#2a2412; }
 QPushButton:pressed { background:#c99200; }
 QPushButton#secondary { background:#20262e; color:#f6f1e7; border:1px solid #3d4652; }
 QPushButton#account { background:#242b34; color:#ffd34d; border:1px solid #f2b90b; }
@@ -1090,7 +1093,7 @@ class LumenWindow(QMainWindow):
         for label, page in pages:
             self.navigation.addItem(QListWidgetItem(label))
             self.page_stack.addWidget(page)
-        self.navigation.currentRowChanged.connect(self.page_stack.setCurrentIndex)
+        self.navigation.currentRowChanged.connect(self.switch_page)
         self.navigation.setCurrentRow(0)
         shell.addWidget(self.navigation)
         shell.addWidget(self.page_stack, 1)
@@ -1098,6 +1101,19 @@ class LumenWindow(QMainWindow):
 
         self.refresh_account()
         self.refresh_instances()
+
+    def switch_page(self, index):
+        self.page_stack.setCurrentIndex(index)
+        effect = QGraphicsOpacityEffect(self.page_stack.currentWidget())
+        page = self.page_stack.currentWidget()
+        page.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", page)
+        animation.setDuration(220)
+        animation.setStartValue(0.25)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        page._tab_animation = animation
+        animation.start()
 
     def home_tab(self):
         page = QWidget()
