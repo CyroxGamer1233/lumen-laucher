@@ -6,12 +6,12 @@ from pathlib import Path
 from PySide6.QtWidgets import QFileDialog
 
 import minecraft_launcher_lib
-from PySide6.QtCore import QThread, QUrl, Signal
+from PySide6.QtCore import QThread, QUrl, Signal, QSize
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
-    QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QSpinBox, QStyle, QVBoxLayout, QWidget,
 )
 
 from lumen import paths
@@ -280,6 +280,8 @@ class InstancesTab(QWidget):
 
         row = QHBoxLayout()
         self.list = QListWidget()
+        self.list.setIconSize(QSize(32, 32))
+        self.list.itemDoubleClicked.connect(lambda _item: self.toggle_mods())
         self.list.currentRowChanged.connect(self.instance_selected)
         row.addWidget(self.list, 1)
 
@@ -298,6 +300,8 @@ class InstancesTab(QWidget):
         actions.addWidget(self.play_button)
         self.open_button = QPushButton("OPEN DIRECTORY")
         self.open_button.clicked.connect(self.open_directory)
+        for button in (new_button, self.edit_button, self.install_button, self.play_button, self.open_button):
+            button.setObjectName("primary")
         actions.addWidget(self.open_button)
         actions.addStretch()
         row.addLayout(actions)
@@ -314,10 +318,17 @@ class InstancesTab(QWidget):
     def refresh(self):
         self.store = InstanceStore(self.store.path)
         self.list.clear()
+        instance_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         for instance in self.store.instances:
-            self.list.addItem(QListWidgetItem(
-                f"{instance.name}  •  {instance.version}  •  {instance.loader}"
-            ))
+            root = Path(getattr(instance, "path", "") or instance_dir(instance.name))
+            mods = root / "mods"
+            mod_count = len(list(mods.glob("*.jar"))) + len(list(mods.glob("*.jar.disabled")))
+            item = QListWidgetItem(
+                instance_icon,
+                f"  {instance.name}  •  {instance.version}  •  {instance.loader}  •  {mod_count} mods",
+            )
+            item.setToolTip("Double-click to enable or disable all mods in this instance")
+            self.list.addItem(item)
 
     def current(self):
         row = self.list.currentRow()
@@ -357,6 +368,29 @@ class InstancesTab(QWidget):
              if item.name == dialog.instance.name), 0
         ))
         self.status.setText("Instance settings saved")
+
+    def toggle_mods(self):
+        instance = self.current()
+        if not instance:
+            self.status.setText("Select an instance first")
+            return
+        mods = Path(getattr(instance, "path", "") or instance_dir(instance.name)) / "mods"
+        mods.mkdir(parents=True, exist_ok=True)
+        jars = list(mods.glob("*.jar"))
+        disabled = list(mods.glob("*.jar.disabled"))
+        if jars:
+            for jar in jars:
+                jar.rename(jar.with_name(jar.name + ".disabled"))
+            self.status.setText(f"Disabled {len(jars)} mods in {instance.name}")
+        elif disabled:
+            for jar in disabled:
+                jar.rename(jar.with_suffix(""))
+            self.status.setText(f"Enabled {len(disabled)} mods in {instance.name}")
+        else:
+            self.status.setText("No mods installed in this instance")
+        self.refresh()
+        self.list.setCurrentRow(next((n for n, item in enumerate(self.store.instances)
+                                      if item.name == instance.name), -1))
 
     def install_selected(self):
         instance = self.current()
