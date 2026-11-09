@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from PySide6.QtWidgets import QFileDialog
+
 import minecraft_launcher_lib
 from PySide6.QtCore import QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
@@ -95,9 +97,10 @@ class InstallLogDialog(QDialog):
 
 
 class InstanceDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, instance=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New instance")
+        self.instance = instance
+        self.setWindowTitle("Edit instance" if instance else "New instance")
         form = QFormLayout(self)
         self.name = QLineEdit()
         self.name.setPlaceholderText("My Fabric Profile")
@@ -108,10 +111,24 @@ class InstanceDialog(QDialog):
         self.ram.setRange(1024, 32768)
         self.ram.setSingleStep(512)
         self.ram.setValue(4096)
+        self.path = QLineEdit()
+        self.path.setPlaceholderText("Default Lumen instance folder")
+        browse = QPushButton("BROWSE")
+        browse.clicked.connect(self.browse_path)
+        path_row = QHBoxLayout()
+        path_row.addWidget(self.path, 1)
+        path_row.addWidget(browse)
+        if instance:
+            self.name.setText(instance.name)
+            self.version.setText(instance.version)
+            self.loader.setCurrentText(instance.loader)
+            self.ram.setValue(instance.ram_mb)
+            self.path.setText(getattr(instance, "path", "") or "")
         form.addRow("Instance name", self.name)
         form.addRow("Minecraft version", self.version)
         form.addRow("Loader", self.loader)
-        form.addRow("RAM", self.ram)
+        form.addRow("RAM (MB)", self.ram)
+        form.addRow("Instance folder", path_row)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
@@ -120,6 +137,11 @@ class InstanceDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def browse_path(self):
+        selected = QFileDialog.getExistingDirectory(self, "Choose instance folder")
+        if selected:
+            self.path.setText(selected)
 
     def accept(self):
         name = self.name.text().strip()
@@ -140,10 +162,12 @@ class InstanceDialog(QDialog):
             )
             return
         self.instance = Instance(
-            name,
-            self.version.text().strip(),
-            self.loader.currentText(),
-            self.ram.value(),
+            name=name,
+            version=self.version.text().strip(),
+            loader=self.loader.currentText(),
+            ram_mb=self.ram.value(),
+            installed_version=(self.instance.installed_version if self.instance else None),
+            path=self.path.text().strip() or None,
         )
         super().accept()
 
@@ -204,7 +228,7 @@ class InstanceInstallWorker(QThread):
                 )
 
             if self.instance.loader == "fabric":
-                mods_directory = instance_dir(self.instance.name) / "mods"
+                mods_directory = Path(getattr(self.instance, "path", "") or instance_dir(self.instance.name)) / "mods"
                 mods_directory.mkdir(parents=True, exist_ok=True)
                 if not any(mods_directory.glob("fabric-api-*.jar")):
                     self.status.emit("Downloading Fabric API...")
@@ -263,6 +287,9 @@ class InstancesTab(QWidget):
         new_button = QPushButton("+ NEW INSTANCE")
         new_button.clicked.connect(self.new_instance)
         actions.addWidget(new_button)
+        self.edit_button = QPushButton("EDIT INSTANCE")
+        self.edit_button.clicked.connect(self.edit_selected)
+        actions.addWidget(self.edit_button)
         self.install_button = QPushButton("DOWNLOAD / INSTALL")
         self.install_button.clicked.connect(self.install_selected)
         actions.addWidget(self.install_button)
@@ -315,6 +342,22 @@ class InstancesTab(QWidget):
             self.refresh()
             self.list.setCurrentRow(len(self.store.instances) - 1)
 
+    def edit_selected(self):
+        instance = self.current()
+        if not instance:
+            self.status.setText("Select an instance first")
+            return
+        dialog = InstanceDialog(instance, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.store.add(dialog.instance)
+        self.refresh()
+        self.list.setCurrentRow(next(
+            (index for index, item in enumerate(self.store.instances)
+             if item.name == dialog.instance.name), 0
+        ))
+        self.status.setText("Instance settings saved")
+
     def install_selected(self):
         instance = self.current()
         if not instance:
@@ -357,7 +400,7 @@ class InstancesTab(QWidget):
         if not instance:
             self.status.setText("Select an instance first")
             return
-        directory = instance_dir(instance.name)
+        directory = Path(getattr(instance, "path", "") or instance_dir(instance.name))
         directory.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
