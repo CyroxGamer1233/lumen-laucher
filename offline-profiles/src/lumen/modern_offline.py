@@ -64,7 +64,15 @@ QPushButton {
 QPushButton:hover { background:#ffd34d; }
 QPushButton#primary { background:#f2b90b; color:#111318; min-height:34px; font-weight:800; }
 QPushButton#primary:hover { background:#ffd34d; }
-QPushButton#primary:disabled { background:#8b6908; color:#2a2412; }
+QPushButton:disabled {
+    background:#d09b0a; color:#fff3bf; border:1px solid #f7cf42;
+}
+QPushButton#primary:disabled {
+    background:#d09b0a; color:#fff3bf; border:1px solid #f7cf42;
+}
+QComboBox:disabled, QLineEdit:disabled {
+    color:#d8c888; border-color:#7d6416;
+}
 QPushButton:pressed { background:#c99200; }
 QPushButton#secondary { background:#20262e; color:#f6f1e7; border:1px solid #3d4652; }
 QPushButton#account { background:#242b34; color:#ffd34d; border:1px solid #f2b90b; }
@@ -1028,6 +1036,56 @@ class MacTitleBar(QWidget):
         self.drag_offset = None
 
 
+class LaunchDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Launching Lumen")
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setFixedSize(390, 190)
+        self.setStyleSheet("""
+            QDialog {
+                background:#101318; border:1px solid #f2b90b;
+                border-radius:16px;
+            }
+            QLabel#launchTitle { color:#fff8e7; font-size:22px; font-weight:800; }
+            QLabel#launchStatus { color:#ffd34d; font-size:13px; }
+            QProgressBar {
+                min-height:10px; background:#1b2027;
+                border:1px solid #4e4320; border-radius:5px;
+            }
+            QProgressBar::chunk { background:#f2b90b; border-radius:5px; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+        title = QLabel("LUMEN")
+        title.setObjectName("launchTitle")
+        subtitle = QLabel("Preparing your offline instance")
+        subtitle.setObjectName("launchStatus")
+        self.status = subtitle
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addWidget(self.progress)
+        layout.addStretch()
+        self._dots = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(220)
+
+    def _tick(self):
+        self._dots = (self._dots + 1) % 4
+        self.status.setText("Preparing your offline instance" + "." * self._dots)
+
+    def finish(self, message):
+        self.timer.stop()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
+        self.status.setText(message)
+
+
 class LumenWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1045,6 +1103,7 @@ class LumenWindow(QMainWindow):
         self.play_process = None
         self.play_instance = None
         self.play_started = 0.0
+        self.launch_dialog = None
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.update_playtime)
 
@@ -1314,6 +1373,13 @@ class LumenWindow(QMainWindow):
         self.refresh_instances(preferred_name=self.play_instance.name)
 
     def launch_game(self):
+        if self.launch_dialog is not None and self.launch_dialog.isVisible():
+            return
+        self.launch_dialog = LaunchDialog(self)
+        self.launch_dialog.show()
+        QTimer.singleShot(280, self._launch_game_now)
+
+    def _launch_game_now(self):
         try:
             profile = self.profile_db.get_active_profile()
             if self.current_instance is None:
@@ -1329,7 +1395,10 @@ class LumenWindow(QMainWindow):
                 self.current_instance.installed_version
                 or self.current_instance.version
             )
-            instance_root = Path(getattr(self.current_instance, "path", "") or paths.instance_dir(self.current_instance.name))
+            instance_root = Path(
+                getattr(self.current_instance, "path", "")
+                or paths.instance_dir(self.current_instance.name)
+            )
             jvm = [
                 f"-Xmx{self.current_instance.ram_mb}M",
                 f"-Xms{min(1024, self.current_instance.ram_mb)}M",
@@ -1349,8 +1418,14 @@ class LumenWindow(QMainWindow):
             self.log.appendPlainText(
                 f"Launching {self.current_instance.name} ({version}) as {profile.username}..."
             )
+            if self.launch_dialog is not None:
+                self.launch_dialog.finish("Minecraft started")
+                QTimer.singleShot(700, self.launch_dialog.close)
         except Exception as error:
+            if self.launch_dialog is not None:
+                self.launch_dialog.close()
             QMessageBox.warning(self, "Cannot launch offline", str(error))
+
 
 
 def main() -> int:
