@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import platform
 import socket
 import time
 from pathlib import Path
@@ -11,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from lumen import config, paths
+from lumen.updater import updater
 
 
 class ServerCheckWorker(QThread):
@@ -75,6 +78,37 @@ class ServersTab(QWidget):
         self.status.setText(result)
 
 
+class UpdateWorker(QThread):
+    checked = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, current_version: str, download: bool = False):
+        super().__init__()
+        self.current_version = current_version
+        self.download = download
+
+    def run(self):
+        try:
+            import httpx
+            manifest_url = os.environ.get("LUMEN_UPDATE_MANIFEST_URL", updater.MANIFEST_URL)
+            public_key = os.environ.get("LUMEN_UPDATE_PUBLIC_KEY", updater.PUBLIC_KEY_B64)
+            platform_name = "windows" if platform.system() == "Windows" else (
+                "macos" if platform.system() == "Darwin" else "linux"
+            )
+            with httpx.Client(timeout=20, follow_redirects=True) as client:
+                update = updater.check(client, self.current_version, platform_name,
+                                       manifest_url, public_key)
+                if update and self.download:
+                    destination = updater.download(
+                        client, update, paths.data_dir() / "updates"
+                    )
+                    self.checked.emit((update, destination))
+                else:
+                    self.checked.emit((update, None))
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class SettingsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -112,10 +146,43 @@ class SettingsTab(QWidget):
         self.save_button = QPushButton("SAVE SETTINGS")
         self.save_button.clicked.connect(self.save)
         layout.addWidget(self.save_button)
+
+        self.auto_update = QCheckBox("Automatically download verified updates")
+        self.auto_update.setToolTip("Updates are staged in the Lumen data folder and never overwrite your profiles.")
+        layout.addWidget(self.auto_update)
+        self.update_button = QPushButton("CHECK FOR UPDATES")
+        self.update_button.clicked.connect(self.check_updates)
+        layout.addWidget(self.update_button)
+        self.update_status = QLabel("Updater ready")
+        self.update_status.setObjectName("muted")
+        layout.addWidget(self.update_status)
+        self.update_worker = None
         self.status = QLabel("")
         self.status.setObjectName("muted")
         layout.addWidget(self.status)
         layout.addStretch()
+
+    def check_updates(self):
+        self.update_button.setEnabled(False)
+        self.update_status.setText("Checking for signed updates...")
+        from lumen import __version__
+        self.update_worker = UpdateWorker(__version__, self.auto_update.isChecked())
+        self.update_worker.checked.connect(self.update_result)
+        self.update_worker.failed.connect(self.update_failed)
+        self.update_worker.finished.connect(lambda: self.update_button.setEnabled(True))
+        self.update_worker.start()
+
+    def update_result(self, result):
+        update, downloaded = result
+        if update is None:
+            self.update_status.setText("You are up to date.")
+        elif downloaded:
+            self.update_status.setText(f"Update {update.version} downloaded safely: {downloaded.name}")
+        else:
+            self.update_status.setText(f"Update {update.version} is available. Enable automatic download to stage it.")
+
+    def update_failed(self, message):
+        self.update_status.setText(f"Updater unavailable: {message}")
 
     def save(self):
         self.settings.mc_version = self.version.text().strip() or "1.21.1"
