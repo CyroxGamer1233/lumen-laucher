@@ -169,6 +169,8 @@ class InstanceDialog(QDialog):
             ram_mb=self.ram.value(),
             installed_version=(self.instance.installed_version if self.instance else None),
             path=self.path.text().strip() or None,
+            playtime_seconds=(self.instance.playtime_seconds if self.instance else 0),
+            last_played=(self.instance.last_played if self.instance else None),
         )
         super().accept()
 
