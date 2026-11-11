@@ -4,6 +4,7 @@ import html
 import json
 import shutil
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -1041,6 +1042,11 @@ class LumenWindow(QMainWindow):
         )
         self.worker = None
         self.current_instance = None
+        self.play_process = None
+        self.play_instance = None
+        self.play_started = 0.0
+        self.play_timer = QTimer(self)
+        self.play_timer.timeout.connect(self.update_playtime)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -1104,13 +1110,12 @@ class LumenWindow(QMainWindow):
 
     def switch_page(self, index):
         self.page_stack.setCurrentIndex(index)
-        effect = QGraphicsOpacityEffect(self.page_stack.currentWidget())
         page = self.page_stack.currentWidget()
-        page.setGraphicsEffect(effect)
-        animation = QPropertyAnimation(effect, b"opacity", page)
-        animation.setDuration(220)
-        animation.setStartValue(0.25)
-        animation.setEndValue(1.0)
+        page.move(28, 0)
+        animation = QPropertyAnimation(page, b"pos", page)
+        animation.setDuration(260)
+        animation.setStartValue(QPoint(28, 0))
+        animation.setEndValue(QPoint(0, 0))
         animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         page._tab_animation = animation
         animation.start()
@@ -1291,6 +1296,23 @@ class LumenWindow(QMainWindow):
         self.download_status.setText("Download failed")
         QMessageBox.critical(self, "Download failed", message)
 
+    def update_playtime(self):
+        if not self.play_process or not self.play_instance:
+            self.play_timer.stop()
+            return
+        if self.play_process.poll() is not None:
+            self.play_instance.last_played = time.strftime("%Y-%m-%dT%H:%M:%S")
+            self.instances_tab.store.save()
+            self.play_timer.stop()
+            self.refresh_instances(preferred_name=self.play_instance.name)
+            self.play_process = None
+            self.play_instance = None
+            return
+        self.play_instance.playtime_seconds += 30
+        self.play_instance.last_played = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self.instances_tab.store.save()
+        self.refresh_instances(preferred_name=self.play_instance.name)
+
     def launch_game(self):
         try:
             profile = self.profile_db.get_active_profile()
@@ -1314,13 +1336,16 @@ class LumenWindow(QMainWindow):
             ]
             jvm.extend(self.skins_tab.jvm_arguments(profile))
             launcher = OfflineLauncher(self.minecraft_dir, self.profile_db)
-            launcher.launch(
+            self.play_process = launcher.launch(
                 version,
                 profile=profile,
                 jvm_arguments=jvm,
                 game_directory=instance_root,
                 output=self.log.appendPlainText,
             )
+            self.play_instance = self.current_instance
+            self.play_started = time.time()
+            self.play_timer.start(30000)
             self.log.appendPlainText(
                 f"Launching {self.current_instance.name} ({version}) as {profile.username}..."
             )
