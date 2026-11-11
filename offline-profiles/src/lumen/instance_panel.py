@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 from PySide6.QtWidgets import QFileDialog
@@ -300,7 +301,13 @@ class InstancesTab(QWidget):
         actions.addWidget(self.play_button)
         self.open_button = QPushButton("OPEN DIRECTORY")
         self.open_button.clicked.connect(self.open_directory)
-        for button in (new_button, self.edit_button, self.install_button, self.play_button, self.open_button):
+        self.select_button = QPushButton("SELECT INSTANCE")
+        self.select_button.clicked.connect(self.play_selected)
+        actions.addWidget(self.select_button)
+        self.delete_button = QPushButton("DELETE INSTANCE")
+        self.delete_button.clicked.connect(self.delete_selected)
+        actions.addWidget(self.delete_button)
+        for button in (new_button, self.edit_button, self.install_button, self.play_button, self.open_button, self.select_button, self.delete_button):
             button.setObjectName("primary")
         actions.addWidget(self.open_button)
         actions.addStretch()
@@ -325,7 +332,7 @@ class InstancesTab(QWidget):
             mod_count = len(list(mods.glob("*.jar"))) + len(list(mods.glob("*.jar.disabled")))
             item = QListWidgetItem(
                 instance_icon,
-                f"  {instance.name}  •  {instance.version}  •  {instance.loader}  •  {mod_count} mods",
+                f"  {instance.name}  •  {instance.version}  •  {instance.loader}  •  {mod_count} mods  •  {self._format_playtime(instance.playtime_seconds)}",
             )
             item.setToolTip("Double-click to enable or disable all mods in this instance")
             self.list.addItem(item)
@@ -341,7 +348,7 @@ class InstancesTab(QWidget):
             self.details.setText(
                 f"{instance.name}\\nMinecraft {instance.version} • "
                 f"{instance.loader} • {instance.ram_mb} MB RAM\\n"
-                f"Launch ID: {installed}"
+                f"Playtime: {self._format_playtime(instance.playtime_seconds)} • Launch ID: {installed}"
             )
             if self.on_selected:
                 self.on_selected(instance)
@@ -391,6 +398,33 @@ class InstancesTab(QWidget):
         self.refresh()
         self.list.setCurrentRow(next((n for n, item in enumerate(self.store.instances)
                                       if item.name == instance.name), -1))
+
+    @staticmethod
+    def _format_playtime(seconds):
+        seconds = max(0, int(seconds or 0))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        return f"{hours}h {minutes}m"
+
+    def delete_selected(self):
+        instance = self.current()
+        if not instance:
+            self.status.setText("Select an instance first")
+            return
+        answer = QMessageBox.question(
+            self, "Delete instance",
+            f"Delete '{instance.name}' and its local files?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        folder = Path(getattr(instance, "path", "") or instance_dir(instance.name))
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+        self.store.instances = [item for item in self.store.instances if item.name != instance.name]
+        self.store.save()
+        self.refresh()
+        self.status.setText(f"Deleted {instance.name}")
 
     def install_selected(self):
         instance = self.current()
