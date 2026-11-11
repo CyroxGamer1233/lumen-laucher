@@ -14,6 +14,8 @@ class Instance:
     ram_mb: int = 4096
     installed_version: str | None = None
     path: str | None = None
+    playtime_seconds: int = 0
+    last_played: str | None = None
 
 
 class InstanceStore:
