@@ -157,6 +157,8 @@ class UpdateWorker(QThread):
 
 
 class SettingsTab(QWidget):
+    theme_changed = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.path = paths.config_path()
@@ -180,6 +182,13 @@ class SettingsTab(QWidget):
         self.ram.setSuffix(" MB (0 = auto)")
         self.ram.setValue(self.settings.ram_mb or 0)
         self.java = QLineEdit(self.settings.java_path or "")
+        self.theme = QComboBox()
+        self.theme.addItem("Gold / Lumen", "gold")
+        self.theme.addItem("Midnight Blue", "midnight")
+        self.theme.addItem("Emerald", "emerald")
+        self.theme.addItem("Violet", "violet")
+        self.theme.setCurrentIndex(max(0, self.theme.findData(getattr(self.settings, "theme", "gold"))))
+        self.theme.currentIndexChanged.connect(lambda _index: self.theme_changed.emit(self.theme.currentData()))
         self.java.setPlaceholderText("Automatic Java runtime")
         self.offline = QCheckBox("Prefer local assets and avoid authentication")
         form.addRow("Minecraft version", self.version)
@@ -187,6 +196,7 @@ class SettingsTab(QWidget):
         form.addRow("JVM profile", self.profile)
         form.addRow("Memory", self.ram)
         form.addRow("Java path", self.java)
+        form.addRow("Launcher theme", self.theme)
         form.addRow("", self.offline)
         layout.addLayout(form)
 
@@ -322,5 +332,6 @@ class SettingsTab(QWidget):
         self.settings.jvm_profile = self.profile.currentText()
         self.settings.ram_mb = self.ram.value() or None
         self.settings.java_path = self.java.text().strip() or None
+        self.settings.theme = self.theme.currentData() or "gold"
         config.save(self.settings, self.path)
         self.status.setText("Settings saved")
