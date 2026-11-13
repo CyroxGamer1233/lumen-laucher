@@ -29,7 +29,6 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
-import java.util.Collection;
 import java.util.Deque;
 import java.util.Properties;
 
@@ -163,23 +162,23 @@ public final class LumenClient implements ClientModInitializer {
     }
 
     private static void drawKeystrokes(GuiGraphics g, Minecraft mc, int screenHeight) {
-        long window = mc.getWindow().getWindow();
         int x = 10, y = screenHeight - 78, size = 20, gap = 3;
-        drawKey(g, mc, window, "W", mc.options.keyUp.getKey().getValue(), x + size + gap, y);
-        drawKey(g, mc, window, "A", mc.options.keyLeft.getKey().getValue(), x, y + size + gap);
-        drawKey(g, mc, window, "S", mc.options.keyDown.getKey().getValue(), x + size + gap, y + size + gap);
-        drawKey(g, mc, window, "D", mc.options.keyRight.getKey().getValue(), x + 2 * (size + gap), y + size + gap);
-        drawKey(g, mc, window, "JUMP", mc.options.keyJump.getKey().getValue(),
+        drawKey(g, mc, mc.options.keyUp, x + size + gap, y);
+        drawKey(g, mc, mc.options.keyLeft, x, y + size + gap);
+        drawKey(g, mc, mc.options.keyDown, x + size + gap, y + size + gap);
+        drawKey(g, mc, mc.options.keyRight, x + 2 * (size + gap), y + size + gap);
+        drawKey(g, mc, mc.options.keyJump,
                 x, y + 2 * (size + gap), 3 * size + 2 * gap, 18);
     }
 
-    private static void drawKey(GuiGraphics g, Minecraft mc, long window, String label, int key, int x, int y) {
-        drawKey(g, mc, window, label, key, x, y, 20, 20);
+    private static void drawKey(GuiGraphics g, Minecraft mc, KeyMapping key, int x, int y) {
+        drawKey(g, mc, key, x, y, 20, 20);
     }
 
-    private static void drawKey(GuiGraphics g, Minecraft mc, long window, String label,
-                                int key, int x, int y, int width, int height) {
-        boolean pressed = key > 0 && GLFW.glfwGetKey(window, key) == GLFW.GLFW_PRESS;
+    private static void drawKey(GuiGraphics g, Minecraft mc, KeyMapping key,
+                                int x, int y, int width, int height) {
+        boolean pressed = key.isDown();
+        String label = key.getTranslatedKeyMessage().getString();
         g.fill(x, y, x + width, y + height, pressed ? 0xFFF2B90B : 0xC9151A20);
         g.fill(x, y, x + width, y + 1, 0xFFFFD34D);
         g.drawCenteredString(mc.font, label, x + width / 2, y + (height - 8) / 2,
@@ -189,9 +188,9 @@ public final class LumenClient implements ClientModInitializer {
     private static void drawArmor(GuiGraphics g, Minecraft mc, int screenHeight) {
         LocalPlayer player = mc.player;
         if (player == null) return;
-        Collection<ItemStack> armor = player.getInventory().getArmor();
-        int x = 10, y = screenHeight / 2 - armor.size() * 10;
-        for (ItemStack item : armor) {
+        int x = 10, y = screenHeight / 2 - 40;
+        for (int slot = 3; slot >= 0; slot--) {
+            ItemStack item = player.getInventory().getArmor(slot);
             if (!item.isEmpty()) g.renderItem(item, x, y);
             y += 20;
         }
