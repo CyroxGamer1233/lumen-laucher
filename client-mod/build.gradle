@@ -5,9 +5,18 @@ plugins {
 version = project.mod_version
 group = 'dev.lumen'
 
-repositories { }
+repositories {
+    maven { url = 'https://maven.fabricmc.net/' }
+}
+
+loom {
+    mixin {
+        defaultRefmapName = "lumen.refmap.json"
+    }
+}
 
 dependencies {
+    annotationProcessor "net.fabricmc:sponge-mixin:0.15.4+mixin.0.8.7"
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"

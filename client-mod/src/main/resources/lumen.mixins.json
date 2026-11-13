@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.lumen.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "OfflineSkinMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

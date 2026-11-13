@@ -1,8 +1,10 @@
-name: release
+name: Lumen Release
+
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -13,46 +15,81 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "21" }
+        with:
+          distribution: temurin
+          java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: "8.8" }
-      - run: gradle build
+        with:
+          gradle-version: "8.10.2"
+      - name: Build Lumen Fabric client
         working-directory: client-mod
+        run: gradle build --no-daemon
       - uses: actions/upload-artifact@v4
-        with: { name: lumen-client-jar, path: client-mod/build/libs/*.jar }
+        with:
+          name: lumen-client-jar
+          path: client-mod/build/libs/*.jar
 
   windows:
     needs: mod
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
       - uses: actions/download-artifact@v4
-        with: { name: lumen-client-jar, path: client-mod/build/libs }
-      - run: python -m pip install -e ".[gui,dev]"
-      - run: python -m pytest -q
-      - run: python build/build_launcher.py
-      - run: choco install innosetup -y --no-progress
-      - name: Build installer
+        with:
+          name: lumen-client-jar
+          path: client-mod/build/libs
+      - name: Bundle the client mod
         shell: pwsh
         run: |
-          $v = "0.2.0"
-          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart("v") }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" build\installer.iss
+          New-Item -ItemType Directory -Force -Path offline-profiles/client-mod | Out-Null
+          Copy-Item client-mod/build/libs/*.jar offline-profiles/client-mod/ -Force
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install and build launcher
+        working-directory: offline-profiles
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gui,dev]"
+          python -m pytest -q
+          python -m PyInstaller --noconfirm --clean --windowed --name LumenOffline --paths src --collect-all PySide6 --collect-all truststore --icon assets/lumen-app.ico --add-data "assets/lumen-app.ico;assets" --add-data "client-mod;client-mod" gui_entry.py
+      - name: Build Windows installer and checksum
+        shell: pwsh
+        working-directory: offline-profiles
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe was not found" }
+          $releaseVersion = "1.1.0"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $releaseVersion = $env:GITHUB_REF_NAME.TrimStart("v")
+          }
+          & $iscc "/DAppVersion=$releaseVersion" "build\installer.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          $installer = "dist\LumenOfflineSetup.exe"
+          if (-not (Test-Path $installer)) { throw "Installer output was not created" }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = "$($installer).sha256"
+          "$hash  LumenOfflineSetup.exe" | Set-Content $checksumPath -Encoding ascii
       - uses: actions/upload-artifact@v4
-        with: { name: LumenSetup-windows, path: dist/installer/*.exe }
-      - uses: actions/upload-artifact@v4
-        with: { name: Lumen-windows-portable, path: dist/Lumen }
+        with:
+          name: LumenSetup-windows
+          path: |
+            offline-profiles/dist/LumenOfflineSetup.exe
+            offline-profiles/dist/LumenOfflineSetup.exe.sha256
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: windows
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: LumenSetup-windows, path: out }
-      - uses: actions/download-artifact@v4
-        with: { name: lumen-client-jar, path: out }
-      - uses: softprops/action-gh-release@v2
-        with: { files: out/* }
+        with:
+          name: LumenSetup-windows
+          path: release
+      - name: Publish versioned release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import minecraft_launcher_lib
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint, QObject
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -65,7 +65,7 @@ QPushButton:hover { background:#ffd34d; }
 QPushButton#primary { background:#f2b90b; color:#111318; min-height:34px; font-weight:800; }
 QPushButton#primary:hover { background:#ffd34d; }
 QPushButton:disabled {
-    background:#d09b0a; color:#fff3bf; border:1px solid #f7cf42;
+    background:#d09b0a; color:#111318; border:1px solid #f7cf42;
 }
 QPushButton#primary:disabled {
     background:#d09b0a; color:#fff3bf; border:1px solid #f7cf42;
@@ -74,8 +74,10 @@ QComboBox:disabled, QLineEdit:disabled {
     color:#d8c888; border-color:#7d6416;
 }
 QPushButton:pressed { background:#c99200; }
-QPushButton#secondary { background:#20262e; color:#f6f1e7; border:1px solid #3d4652; }
-QPushButton#account { background:#242b34; color:#ffd34d; border:1px solid #f2b90b; }
+QPushButton#secondary { background:#f2b90b; color:#111318; border:1px solid #ffd34d; }
+QPushButton#secondary:hover { background:#ffd34d; color:#111318; }
+QPushButton#account { background:#f2b90b; color:#111318; border:1px solid #ffd34d; }
+QPushButton#account:hover { background:#ffd34d; color:#111318; }
 QComboBox, QLineEdit {
     background:#151a20; color:#f6f1e7; border:1px solid #3d4652;
     border-radius:7px; padding:8px;
@@ -1036,54 +1038,97 @@ class MacTitleBar(QWidget):
         self.drag_offset = None
 
 
+class GameOutputBridge(QObject):
+    line = Signal(str)
+
+
 class LaunchDialog(QDialog):
+    stop_requested = Signal()
+    kill_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Launching Lumen")
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setFixedSize(390, 190)
+        self.setWindowTitle("Lumen • Minecraft Console")
+        self.setMinimumSize(720, 500)
+        self.resize(800, 560)
         self.setStyleSheet("""
-            QDialog {
-                background:#101318; border:1px solid #f2b90b;
-                border-radius:16px;
+            QDialog { background:#0b0d10; color:#f6f1e7; }
+            QLabel#consoleTitle { color:#fff8e7; font-size:20px; font-weight:800; }
+            QLabel#consoleStatus { color:#ffd34d; }
+            QPlainTextEdit {
+                background:#101419; color:#e8edf3; border:1px solid #3d4652;
+                border-radius:10px; font-family:Consolas, 'Cascadia Mono', monospace;
             }
-            QLabel#launchTitle { color:#fff8e7; font-size:22px; font-weight:800; }
-            QLabel#launchStatus { color:#ffd34d; font-size:13px; }
-            QProgressBar {
-                min-height:10px; background:#1b2027;
-                border:1px solid #4e4320; border-radius:5px;
-            }
-            QProgressBar::chunk { background:#f2b90b; border-radius:5px; }
         """)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(12)
-        title = QLabel("LUMEN")
-        title.setObjectName("launchTitle")
-        subtitle = QLabel("Preparing your offline instance")
-        subtitle.setObjectName("launchStatus")
-        self.status = subtitle
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(10)
+        title = QLabel("LUMEN  •  GAME CONSOLE")
+        title.setObjectName("consoleTitle")
+        self.status = QLabel("Preparing local game process")
+        self.status.setObjectName("consoleStatus")
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumBlockCount(4000)
+        self.output.setPlaceholderText("Minecraft output will appear here…")
         layout.addWidget(title)
-        layout.addWidget(subtitle)
+        layout.addWidget(self.status)
         layout.addWidget(self.progress)
-        layout.addStretch()
+        layout.addWidget(self.output, 1)
+
+        controls = QHBoxLayout()
+        controls.addStretch()
+        self.stop_button = QPushButton("STOP GAME")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.stop_requested.emit)
+        self.kill_button = QPushButton("FORCE KILL")
+        self.kill_button.setEnabled(False)
+        self.kill_button.clicked.connect(self.kill_requested.emit)
+        self.close_button = QPushButton("CLOSE")
+        self.close_button.clicked.connect(self.close)
+        controls.addWidget(self.stop_button)
+        controls.addWidget(self.kill_button)
+        controls.addWidget(self.close_button)
+        layout.addLayout(controls)
         self._dots = 0
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._tick)
-        self.timer.start(220)
+        self.animation = QTimer(self)
+        self.animation.timeout.connect(self._tick)
+        self.animation.start(260)
 
     def _tick(self):
         self._dots = (self._dots + 1) % 4
-        self.status.setText("Preparing your offline instance" + "." * self._dots)
+        if not self.stop_button.isEnabled():
+            self.status.setText("Preparing local game process" + "." * self._dots)
 
-    def finish(self, message):
-        self.timer.stop()
-        self.progress.setRange(0, 100)
-        self.progress.setValue(100)
-        self.status.setText(message)
+    def append_line(self, line: str):
+        self.output.appendPlainText(line)
+
+    def set_running(self, instance_name: str):
+        self.animation.stop()
+        self.progress.setVisible(False)
+        self.status.setText(f"RUNNING  •  {instance_name}")
+        self.stop_button.setEnabled(True)
+        self.kill_button.setEnabled(True)
+
+    def set_exited(self, code: int):
+        self.animation.stop()
+        self.progress.setVisible(False)
+        self.status.setText(f"GAME EXITED  •  code {code}")
+        self.stop_button.setEnabled(False)
+        self.kill_button.setEnabled(False)
+        self.append_line(f"\n[Lumen] Game process exited with code {code}")
+
+    def set_failed(self, message: str):
+        self.animation.stop()
+        self.progress.setVisible(False)
+        self.status.setText("LAUNCH FAILED")
+        self.append_line("[Lumen] " + message)
+        self.stop_button.setEnabled(False)
+        self.kill_button.setEnabled(False)
+
+
 
 
 class LumenWindow(QMainWindow):
@@ -1104,8 +1149,13 @@ class LumenWindow(QMainWindow):
         self.play_instance = None
         self.play_started = 0.0
         self.launch_dialog = None
+        self.output_bridge = GameOutputBridge(self)
+        self.output_bridge.line.connect(self.receive_game_output)
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.update_playtime)
+        self.process_watch = QTimer(self)
+        self.process_watch.setInterval(500)
+        self.process_watch.timeout.connect(self.monitor_game_process)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -1360,24 +1410,63 @@ class LumenWindow(QMainWindow):
             self.play_timer.stop()
             return
         if self.play_process.poll() is not None:
-            self.play_instance.last_played = time.strftime("%Y-%m-%dT%H:%M:%S")
-            self.instances_tab.store.save()
-            self.play_timer.stop()
-            self.refresh_instances(preferred_name=self.play_instance.name)
-            self.play_process = None
-            self.play_instance = None
+            self.monitor_game_process()
             return
         self.play_instance.playtime_seconds += 30
         self.play_instance.last_played = time.strftime("%Y-%m-%dT%H:%M:%S")
         self.instances_tab.store.save()
         self.refresh_instances(preferred_name=self.play_instance.name)
 
+    def receive_game_output(self, line: str):
+        self.log.appendPlainText(line)
+        if self.launch_dialog is not None:
+            self.launch_dialog.append_line(line)
+
+    def monitor_game_process(self):
+        if not self.play_process:
+            self.process_watch.stop()
+            return
+        code = self.play_process.poll()
+        if code is None:
+            return
+        self.process_watch.stop()
+        self.play_timer.stop()
+        if self.play_instance:
+            self.play_instance.last_played = time.strftime("%Y-%m-%dT%H:%M:%S")
+            self.instances_tab.store.save()
+            self.refresh_instances(preferred_name=self.play_instance.name)
+        if self.launch_dialog is not None:
+            self.launch_dialog.set_exited(code)
+        self.play_process = None
+        self.play_instance = None
+        self.play_started = 0.0
+
+    def stop_game(self):
+        if self.play_process and self.play_process.poll() is None:
+            self.log.appendPlainText("Stopping Minecraft process...")
+            if self.launch_dialog is not None:
+                self.launch_dialog.append_line("[Lumen] Stop requested.")
+            self.play_process.terminate()
+
+    def kill_game(self):
+        if self.play_process and self.play_process.poll() is None:
+            self.log.appendPlainText("Force-killing Minecraft process...")
+            if self.launch_dialog is not None:
+                self.launch_dialog.append_line("[Lumen] Force kill requested.")
+            self.play_process.kill()
+
     def launch_game(self):
-        if self.launch_dialog is not None and self.launch_dialog.isVisible():
+        if self.play_process is not None and self.play_process.poll() is None:
+            if self.launch_dialog is not None:
+                self.launch_dialog.show()
+                self.launch_dialog.raise_()
+                self.launch_dialog.activateWindow()
             return
         self.launch_dialog = LaunchDialog(self)
+        self.launch_dialog.stop_requested.connect(self.stop_game)
+        self.launch_dialog.kill_requested.connect(self.kill_game)
         self.launch_dialog.show()
-        QTimer.singleShot(280, self._launch_game_now)
+        QTimer.singleShot(250, self._launch_game_now)
 
     def _launch_game_now(self):
         try:
@@ -1402,6 +1491,8 @@ class LumenWindow(QMainWindow):
             jvm = [
                 f"-Xmx{self.current_instance.ram_mb}M",
                 f"-Xms{min(1024, self.current_instance.ram_mb)}M",
+                f"-Dlumen.account.name={profile.username}",
+                f"-Dlumen.performance.preset={self.settings_tab.settings.jvm_profile}",
             ]
             jvm.extend(self.skins_tab.jvm_arguments(profile))
             launcher = OfflineLauncher(self.minecraft_dir, self.profile_db)
@@ -1410,20 +1501,22 @@ class LumenWindow(QMainWindow):
                 profile=profile,
                 jvm_arguments=jvm,
                 game_directory=instance_root,
-                output=self.log.appendPlainText,
+                output=self.output_bridge.line.emit,
             )
             self.play_instance = self.current_instance
             self.play_started = time.time()
             self.play_timer.start(30000)
+            self.process_watch.start()
+            self.launch_dialog.set_running(self.current_instance.name)
             self.log.appendPlainText(
                 f"Launching {self.current_instance.name} ({version}) as {profile.username}..."
             )
-            if self.launch_dialog is not None:
-                self.launch_dialog.finish("Minecraft started")
-                QTimer.singleShot(700, self.launch_dialog.close)
+            self.launch_dialog.append_line(
+                f"[Lumen] Starting {self.current_instance.name} • Minecraft {version} • {profile.username}"
+            )
         except Exception as error:
             if self.launch_dialog is not None:
-                self.launch_dialog.close()
+                self.launch_dialog.set_failed(str(error))
             QMessageBox.warning(self, "Cannot launch offline", str(error))
 
 

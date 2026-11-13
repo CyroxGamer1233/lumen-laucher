@@ -1,4 +1,5 @@
 {
+  "key.lumen.open_menu": "Open Lumen Client Menu",
   "key.lumen.toggle_hud": "Toggle Lumen HUD",
-  "category.lumen": "Lumen"
+  "category.lumen": "Lumen Client"
 }
