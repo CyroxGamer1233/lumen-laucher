@@ -311,7 +311,6 @@ class InstancesTab(QWidget):
         actions.addWidget(self.delete_button)
         for button in (new_button, self.edit_button, self.install_button, self.play_button, self.open_button, self.select_button, self.delete_button):
             button.setObjectName("primary")
-        actions.addWidget(self.open_button)
         actions.addStretch()
         row.addLayout(actions)
         layout.addLayout(row)
@@ -356,7 +355,7 @@ class InstancesTab(QWidget):
                 self.on_selected(instance)
 
     def new_instance(self):
-        dialog = InstanceDialog(self)
+        dialog = InstanceDialog(parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.store.add(dialog.instance)
             self.refresh()
