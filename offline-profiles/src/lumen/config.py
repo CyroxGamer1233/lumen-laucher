@@ -7,6 +7,7 @@ from pathlib import Path
 SCHEMA = 1
 MACHINE_SPECIFIC = {"java_path"}          # never exported
 PROFILES = {"low_end", "balanced", "high_end"}
+THEMES = {"gold", "midnight", "emerald", "violet"}
 LOADERS = {"vanilla", "fabric", "forge"}
 SETTABLE = {"mc_version", "loader", "loader_version", "jvm_profile", "ram_mb", "offline_username"}
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$")
@@ -26,6 +27,7 @@ class Settings:
     offline_username: str = "Player"
     mod_profile: str = "performance"
     error_reporting: bool = False         # opt-in only
+    theme: str = "gold"
 
 
 def _validate(s: Settings) -> Settings:
@@ -38,6 +40,8 @@ def _validate(s: Settings) -> Settings:
         s.jvm_profile = "balanced"
     if s.loader not in LOADERS:
         s.loader = "fabric"
+    if s.theme not in THEMES:
+        s.theme = "gold"
     if s.ram_mb is not None:
         s.ram_mb = max(1024, min(int(s.ram_mb), 32768))
     s.offline_username = "".join(c for c in s.offline_username if c.isalnum() or c == "_")[:16] or "Player"
