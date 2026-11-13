@@ -104,6 +104,42 @@ QProgressBar::chunk { background:#f2b90b; border-radius:5px; }
 """
 
 
+
+THEME_OVERRIDES = {
+    "gold": "",
+    "midnight": """
+QPushButton { background:#4d8dff; color:#ffffff; }
+QPushButton:hover { background:#75aaff; color:#07111f; }
+QPushButton#primary, QPushButton#account { background:#4d8dff; color:#ffffff; }
+QListWidget#navigation::item:selected { background:#4d8dff; color:#ffffff; }
+QTabBar::tab:selected { background:#4d8dff; color:#ffffff; }
+QProgressBar::chunk { background:#4d8dff; }
+""",
+    "emerald": """
+QPushButton { background:#20c997; color:#071711; }
+QPushButton:hover { background:#65e6bd; color:#071711; }
+QPushButton#primary, QPushButton#account { background:#20c997; color:#071711; }
+QListWidget#navigation::item:selected { background:#20c997; color:#071711; }
+QTabBar::tab:selected { background:#20c997; color:#071711; }
+QProgressBar::chunk { background:#20c997; }
+""",
+    "violet": """
+QPushButton { background:#a875ff; color:#160b24; }
+QPushButton:hover { background:#c5a4ff; color:#160b24; }
+QPushButton#primary, QPushButton#account { background:#a875ff; color:#160b24; }
+QListWidget#navigation::item:selected { background:#a875ff; color:#160b24; }
+QTabBar::tab:selected { background:#a875ff; color:#160b24; }
+QProgressBar::chunk { background:#a875ff; }
+"""
+}
+
+def apply_launcher_theme(theme: str):
+    app = QApplication.instance()
+    if app is None:
+        return
+    app.setStyleSheet(STYLE + THEME_OVERRIDES.get(theme, ""))
+
+
 class DownloadWorker(QThread):
     progress = Signal(str, int, int)
     done = Signal()
@@ -1188,6 +1224,8 @@ class LumenWindow(QMainWindow):
         self.servers_tab = ServersTab()
         self.skins_tab = SkinsTab()
         self.settings_tab = SettingsTab()
+        self.settings_tab.theme_changed.connect(self.apply_theme)
+        self.apply_theme(getattr(self.settings_tab.settings, "theme", "gold"))
 
         shell = QHBoxLayout()
         shell.setSpacing(14)
@@ -1216,6 +1254,11 @@ class LumenWindow(QMainWindow):
 
         self.refresh_account()
         self.refresh_instances()
+
+    def apply_theme(self, theme: str):
+        apply_launcher_theme(theme)
+        if hasattr(self, "log"):
+            self.log.appendPlainText(f"Theme changed to {theme}")
 
     def switch_page(self, index):
         self.page_stack.setCurrentIndex(index)
@@ -1525,7 +1568,7 @@ def main() -> int:
     logging_setup.setup(paths.log_dir())
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLE)
+    apply_launcher_theme("gold")
     icon_path = resource_path("assets/lumen-app.ico")
     app_icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
     app.setWindowIcon(app_icon)
