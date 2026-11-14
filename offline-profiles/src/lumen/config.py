@@ -7,7 +7,7 @@ from pathlib import Path
 SCHEMA = 1
 MACHINE_SPECIFIC = {"java_path"}          # never exported
 PROFILES = {"low_end", "balanced", "high_end"}
-THEMES = {"gold", "midnight", "emerald", "violet"}
+THEMES = {"gold", "midnight", "emerald", "violet", "crimson", "arctic"}
 LOADERS = {"vanilla", "fabric", "forge"}
 SETTABLE = {"mc_version", "loader", "loader_version", "jvm_profile", "ram_mb", "offline_username"}
 _VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$")

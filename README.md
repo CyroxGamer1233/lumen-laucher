@@ -26,7 +26,7 @@ The packaged GUI entry point is lumen.ui.v3.
 
 ## Authentication and offline profiles
 
-Online Microsoft sign-in uses the device-code flow. Set the public Azure client ID only when online sign-in is needed:
+Online Microsoft sign-in uses the device-code flow. Set the public Azure client ID when online sign-in is needed:
 
 ~~~powershell
 $env:LUMEN_MS_CLIENT_ID = "your-public-client-id"

@@ -187,6 +187,8 @@ class SettingsTab(QWidget):
         self.theme.addItem("Midnight Blue", "midnight")
         self.theme.addItem("Emerald", "emerald")
         self.theme.addItem("Violet", "violet")
+        self.theme.addItem("Crimson", "crimson")
+        self.theme.addItem("Arctic", "arctic")
         self.theme.setCurrentIndex(max(0, self.theme.findData(getattr(self.settings, "theme", "gold"))))
         self.theme.currentIndexChanged.connect(lambda _index: self.theme_changed.emit(self.theme.currentData()))
         self.java.setPlaceholderText("Automatic Java runtime")

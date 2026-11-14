@@ -61,7 +61,7 @@ jobs:
           $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe was not found" }
-          $releaseVersion = "1.1.0"
+          $releaseVersion = "1.2.0"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $releaseVersion = $env:GITHUB_REF_NAME.TrimStart("v")
           }

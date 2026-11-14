@@ -25,7 +25,7 @@ class SignInWorker(QThread):
 
     def run(self):
         try:
-            account = session.sign_in(self.settings, lambda c, u: self.code.emit(c, u))
+            account = session.sign_in(self.settings, lambda code, url: self.code.emit(code, url))
             self.done.emit(account.username)
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -68,22 +68,52 @@ class LaunchWorker(QThread):
             self.failed.emit(str(exc))
 
 
-THEME = """
-QMainWindow,QWidget{background:#080909;color:#f7f2dc;font-family:'Courier New';}
-QTabWidget::pane{border:1px solid #34301d;background:#10110e;}
-QTabBar::tab{background:#14150f;color:#8e8b78;padding:12px 16px;border:0;border-bottom:2px solid transparent;}
-QTabBar::tab:selected{color:#f5c842;border-bottom:2px solid #f5c842;}
-QFrame#card{background:#12130f;border:1px solid #39351d;border-radius:10px;}
-QLabel#brand{color:#f5c842;font-size:24px;font-weight:700;}
-QLabel#title{color:#f5c842;font-size:26px;font-weight:700;}
-QLabel#muted{color:#aaa58e;}
-QLineEdit,QComboBox,QListWidget{background:#090a08;color:#f7f2dc;border:1px solid #4b4525;border-radius:5px;padding:8px;}
-QPushButton{background:#252314;color:#f7f2dc;border:1px solid #665b2b;border-radius:5px;padding:9px 14px;}
-QPushButton:hover{background:#3a3214;border-color:#f5c842;color:#f5c842;}
-QPushButton#primary{background:#f5c842;color:#090a08;font-weight:700;border:0;padding:12px 22px;}
-QCheckBox{color:#d5cfb6;spacing:8px;}
-QSlider::groove:horizontal{height:5px;background:#39351d;}
-QSlider::handle:horizontal{width:14px;margin:-5px 0;background:#f5c842;border-radius:7px;}
+THEMES = {
+    "gold": {
+        "background": "#080909", "surface": "#10110e", "card": "#12130f",
+        "tab": "#14150f", "tab_text": "#8e8b78", "text": "#f7f2dc",
+        "muted": "#aaa58e", "border": "#39351d", "field_border": "#4b4525",
+        "accent": "#f5c842", "checkbox": "#d5cfb6",
+    },
+    "ocean": {
+        "background": "#080b10", "surface": "#101720", "card": "#121c27",
+        "tab": "#151e29", "tab_text": "#8899aa", "text": "#edf4fb",
+        "muted": "#a7b6c5", "border": "#283d50", "field_border": "#35536b",
+        "accent": "#56c8f2", "checkbox": "#cedce8",
+    },
+    "emerald": {
+        "background": "#080d0a", "surface": "#101912", "card": "#132017",
+        "tab": "#152019", "tab_text": "#899a8d", "text": "#eff6ef",
+        "muted": "#a8b9aa", "border": "#2b4531", "field_border": "#375941",
+        "accent": "#6ce08a", "checkbox": "#d2e3d4",
+    },
+    "violet": {
+        "background": "#0b0910", "surface": "#15111c", "card": "#191421",
+        "tab": "#1c1725", "tab_text": "#9a8da8", "text": "#f5effa",
+        "muted": "#b6a9c2", "border": "#433452", "field_border": "#59446b",
+        "accent": "#c18cff", "checkbox": "#ded2e8",
+    },
+}
+
+
+def theme_stylesheet(theme):
+    colors = THEMES.get(theme, THEMES["gold"])
+    return f"""
+QMainWindow,QWidget{{background:{colors['background']};color:{colors['text']};font-family:'Courier New';}}
+QTabWidget::pane{{border:1px solid {colors['border']};background:{colors['surface']};}}
+QTabBar::tab{{background:{colors['tab']};color:{colors['tab_text']};padding:12px 10px;border:0;border-bottom:2px solid transparent;min-width:76px;}}
+QTabBar::tab:selected{{color:{colors['accent']};border-bottom:2px solid {colors['accent']};}}
+QFrame#card{{background:{colors['card']};border:1px solid {colors['border']};border-radius:10px;}}
+QLabel#brand{{color:{colors['accent']};font-size:24px;font-weight:700;}}
+QLabel#title{{color:{colors['accent']};font-size:26px;font-weight:700;}}
+QLabel#muted{{color:{colors['muted']};}}
+QLineEdit,QComboBox,QListWidget{{background:{colors['background']};color:{colors['text']};border:1px solid {colors['field_border']};border-radius:5px;padding:8px;}}
+QPushButton{{background:#252314;color:#f7f2dc;border:1px solid #665b2b;border-radius:5px;padding:9px 14px;}}
+QPushButton:hover{{background:#3a3214;border-color:#f5c842;color:#f5c842;}}
+QPushButton#primary{{background:#f5c842;color:#090a08;font-weight:700;border:0;padding:12px 22px;}}
+QCheckBox{{color:{colors['checkbox']};spacing:8px;}}
+QSlider::groove:horizontal{{height:5px;background:{colors['border']};}}
+QSlider::handle:horizontal{{width:14px;margin:-5px 0;background:{colors['accent']};border-radius:7px;}}
 """
 
 
@@ -169,11 +199,14 @@ class LauncherV3(QMainWindow):
         self.setWindowTitle(f"LUMEN // v{__version__}")
         self.resize(1180, 760)
         self.setMinimumSize(980, 650)
-        self.setStyleSheet(THEME)
         self.settings = config.load(paths.config_path())
+        self.setStyleSheet(theme_stylesheet(self.settings.theme))
         self.store = session.store()
         self.worker = None
         self.tabs = QTabWidget()
+        self.tabs.setUsesScrollButtons(False)
+        self.tabs.setTabBarAutoHide(False)
+        self.tabs.tabBar().setExpanding(True)
         self.setCentralWidget(self.tabs)
         self.tabs.currentChanged.connect(self.animate_tab)
         self.tabs.addTab(self.play_tab(), "PLAY")
@@ -182,7 +215,7 @@ class LauncherV3(QMainWindow):
         self.tabs.addTab(self.catalog_tab("shaders"), "SHADERS")
         self.tabs.addTab(self.catalog_tab("modpacks"), "MODPACKS")
         self.tabs.addTab(self.skin_tab(), "SKINS")
-        self.tabs.addTab(self.accounts_tab(), "ACCOUNTS")
+        self.tabs.addTab(self.accounts_tab(), "PROFILE")
         self.tabs.addTab(self.settings_tab(), "SETTINGS")
 
     def shell(self, title, subtitle):
@@ -196,6 +229,14 @@ class LauncherV3(QMainWindow):
 
     def play_tab(self):
         page, lay = self.shell("PLAY", "Your instance, your rules.")
+        hero, hero_layout = card(), QVBoxLayout()
+        hero_layout.setContentsMargins(20, 16, 20, 16)
+        hero.setLayout(hero_layout)
+        hero_layout.addWidget(lbl("LUMEN CLIENT HUB", "brand"))
+        hero_layout.addWidget(lbl("Manage your instance and jump straight into the game.", "muted"))
+        self.home_profile_status = lbl("", "muted")
+        hero_layout.addWidget(self.home_profile_status)
+        lay.addWidget(hero)
         panel, form = card(), QFormLayout()
         panel.setLayout(form)
         self.version = QComboBox()
@@ -278,7 +319,7 @@ class LauncherV3(QMainWindow):
         return page
 
     def accounts_tab(self):
-        page, lay = self.shell("ACCOUNTS", "Secure Microsoft sign-in and owner-gated offline profiles.")
+        page, lay = self.shell("ACCOUNTS", "Microsoft sign-in and offline profiles.")
         self.accounts_label = lbl("", "muted")
         lay.addWidget(self.accounts_label)
         sign = QPushButton("SIGN IN WITH MICROSOFT")
@@ -305,8 +346,14 @@ class LauncherV3(QMainWindow):
         self.profile = QComboBox()
         self.profile.addItems(["low_end", "balanced", "high_end"])
         self.profile.setCurrentText(self.settings.jvm_profile)
+        self.theme = QComboBox()
+        for label, theme in (("Black & Gold", "gold"), ("Ocean", "ocean"),
+                             ("Emerald", "emerald"), ("Violet", "violet")):
+            self.theme.addItem(label, theme)
+        self.theme.setCurrentIndex(max(0, self.theme.findData(self.settings.theme)))
         form.addRow("JVM profile", self.profile)
-        form.addRow("", lbl("Microsoft online sign-in is optional. If needed, set LUMEN_MS_CLIENT_ID in the environment.", "muted"))
+        form.addRow("Launcher theme", self.theme)
+        form.addRow("", lbl("Offline play requires one prior ownership-verifying sign-in.", "muted"))
         save = QPushButton("SAVE SETTINGS")
         save.clicked.connect(self.save_settings)
         form.addRow("", save)
@@ -331,26 +378,50 @@ class LauncherV3(QMainWindow):
         self.settings.jvm_profile = self.profile.currentText()
         self.settings.offline_username = self.offline_name.text().strip() or "Player"
         self.settings.mod_profile = "performance" if self.performance.isChecked() else "minimal"
+        self.settings.theme = self.theme.currentData()
         config.save(self.settings, paths.config_path())
-        self.offline_state.setText("Saved. Offline mode requires verified ownership.")
+        self.setStyleSheet(theme_stylesheet(self.settings.theme))
+        self.refresh_accounts()
 
     def refresh_accounts(self):
         accounts = self.store.list_accounts()
-        names = ", ".join(v["username"] for v in accounts.values()) or "No Microsoft account saved"
-        self.accounts_label.setText(f"Saved accounts: {names}")
-        self.offline_state.setText("Offline unlocked." if self.store.has_verified_ownership()
-                                   else "Offline locked until ownership is verified.")
+        names = ", ".join(value["username"] for value in accounts.values())
+        self.accounts_label.setText(
+            f"Saved accounts: {names}" if names else "No Microsoft account saved"
+        )
+        verified = self.store.has_verified_ownership()
+        offline_access = (
+            "offline unlocked" if verified
+            else "offline locked until ownership is verified"
+        )
+        self.offline_state.setText(
+            "Offline unlocked." if verified
+            else "Offline locked until ownership is verified."
+        )
+        self.home_profile_status.setText(
+            f"{names or 'No Microsoft account saved'}  •  {offline_access}"
+        )
 
     def sign_in(self):
         if not session.client_id(self.settings):
-            QMessageBox.information(self, "Online sign-in setup", "Set LUMEN_MS_CLIENT_ID before using Microsoft sign-in. Offline play needs no client ID after ownership is verified.")
+            QMessageBox.information(
+                self, "Online sign-in setup",
+                "Set LUMEN_MS_CLIENT_ID before using Microsoft sign-in.",
+            )
             self.tabs.setCurrentIndex(7)
             return
         self.worker = SignInWorker(self.settings)
-        self.worker.code.connect(lambda code, url: webbrowser.open(url))
-        self.worker.done.connect(lambda name: self.refresh_accounts())
-        self.worker.failed.connect(lambda msg: QMessageBox.warning(self, "Sign-in failed", msg))
+        self.worker.code.connect(self.show_code)
+        self.worker.done.connect(lambda _name: self.refresh_accounts())
+        self.worker.failed.connect(lambda message: QMessageBox.warning(
+            self, "Sign-in failed", message
+        ))
         self.worker.start()
+
+    def show_code(self, code, url):
+        QApplication.clipboard().setText(code)
+        self.accounts_label.setText(f"Enter code {code} at {url} (copied to clipboard).")
+        webbrowser.open(url)
 
     def install_game(self):
         self.save_settings()
@@ -365,7 +436,10 @@ class LauncherV3(QMainWindow):
         self.save_settings()
         offline = self.mode.currentIndex() == 1
         if offline and not self.store.has_verified_ownership():
-            QMessageBox.information(self, "Offline locked", "Sign in once to verify ownership first.")
+            QMessageBox.information(
+                self, "Offline profile locked",
+                "Sign in once to verify ownership on this device.",
+            )
             self.tabs.setCurrentIndex(6)
             return
         if not offline and not self.store.list_accounts():
@@ -373,7 +447,9 @@ class LauncherV3(QMainWindow):
             self.tabs.setCurrentIndex(6)
             return
         self.play_status.setText("Launching...")
-        self.worker = LaunchWorker(self.settings, offline, self.performance.isChecked(), self.force.isChecked())
+        self.worker = LaunchWorker(
+            self.settings, offline, self.performance.isChecked(), self.force.isChecked()
+        )
         self.worker.status.connect(self.play_status.setText)
         self.worker.failed.connect(lambda msg: self.play_status.setText(f"Error: {msg}"))
         self.worker.start()

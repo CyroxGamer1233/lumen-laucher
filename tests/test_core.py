@@ -116,12 +116,13 @@ def test_redaction():
 
 def test_settings_export_import_roundtrip():
     d = tmp()
-    s = config.Settings(ram_mb=4096, java_path="/opt/java/bin/java", jvm_profile="high_end")
+    s = config.Settings(ram_mb=4096, java_path="/opt/java/bin/java", jvm_profile="high_end", theme="ocean")
     config.export_settings(s, d / "x.json")
     blob = json.loads((d / "x.json").read_text())
     assert "java_path" not in blob["settings"]
     out = config.import_settings(d / "x.json", config.Settings(java_path="/mine/java"))
     assert out.ram_mb == 4096 and out.jvm_profile == "high_end" and out.java_path == "/mine/java"
+    assert out.theme == "ocean"
     (d / "bad.json").write_text(json.dumps({"app": "other", "schema": 1}))
     try:
         config.import_settings(d / "bad.json", s)
@@ -134,6 +135,7 @@ def test_settings_clamped():
     assert config.load(Path("/nonexistent/x.json")).loader == "fabric"
     s = config._validate(config.Settings(ram_mb=999999, jvm_profile="evil", offline_username="a b!c"))
     assert s.ram_mb == 32768 and s.jvm_profile == "balanced" and s.offline_username == "abc"
+    assert config._validate(config.Settings(theme="invalid")).theme == "gold"
 
 
 def test_update_manifest_signature():

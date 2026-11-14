@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from lumen.updater import updater
+from lumen import config
 
 
 def test_unconfigured_updater_fails_clearly():
@@ -25,3 +26,8 @@ def test_download_name_ignores_query_string():
     finally:
         updater.download_verified = orig
     assert seen["dest"].name == "lumen-1.0.0.exe"
+
+
+def test_new_visual_themes_are_valid_settings():
+    assert config._validate(config.Settings(theme="crimson")).theme == "crimson"
+    assert config._validate(config.Settings(theme="arctic")).theme == "arctic"

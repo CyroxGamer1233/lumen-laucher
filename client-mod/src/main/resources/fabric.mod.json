@@ -3,7 +3,7 @@
   "id": "lumen",
   "version": "${version}",
   "name": "Lumen Client",
-  "description": "Lightweight FPS, CPS, keystrokes, armor and potion HUD, local skin support, and low-end graphics presets.",
+  "description": "Lumen client hub, black-and-gold Minecraft UI accents, FPS and HUD controls, local skin support, and graphics presets.",
   "authors": [
     "Lumen Team"
   ],

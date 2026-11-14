@@ -13,7 +13,7 @@ from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Si
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+    QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QFileDialog, QPlainTextEdit, QScrollArea, QSplashScreen, QStackedWidget,
@@ -54,6 +54,15 @@ STYLE = """
 QMainWindow, QWidget { background:#0b0d10; color:#f6f1e7; font-size:13px; }
 QLabel#title { font-size:25px; font-weight:800; color:#ffffff; }
 QLabel#muted { color:#9ba4b0; }
+QLabel#heroKicker { color:#ffd34d; font-size:11px; font-weight:800; letter-spacing:2px; }
+QLabel#heroTitle { color:#fff8e7; font-size:28px; font-weight:800; }
+QFrame#homeHero {
+    background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #191d21,stop:1 #101317);
+    border:1px solid #55420f; border-left:4px solid #f2b90b; border-radius:12px;
+}
+QFrame#instanceCard {
+    background:#13171c; border:1px solid #2c333c; border-radius:10px;
+}
 QFrame, QListWidget, QPlainTextEdit {
     background:#13171c; border:1px solid #2c333c; border-radius:10px;
 }
@@ -108,28 +117,39 @@ QProgressBar::chunk { background:#f2b90b; border-radius:5px; }
 THEME_OVERRIDES = {
     "gold": "",
     "midnight": """
-QPushButton { background:#4d8dff; color:#ffffff; }
-QPushButton:hover { background:#75aaff; color:#07111f; }
-QPushButton#primary, QPushButton#account { background:#4d8dff; color:#ffffff; }
 QListWidget#navigation::item:selected { background:#4d8dff; color:#ffffff; }
 QTabBar::tab:selected { background:#4d8dff; color:#ffffff; }
 QProgressBar::chunk { background:#4d8dff; }
+QLabel#heroKicker { color:#75aaff; }
+QFrame#homeHero { border-color:#31517d; border-left-color:#4d8dff; }
 """,
     "emerald": """
-QPushButton { background:#20c997; color:#071711; }
-QPushButton:hover { background:#65e6bd; color:#071711; }
-QPushButton#primary, QPushButton#account { background:#20c997; color:#071711; }
 QListWidget#navigation::item:selected { background:#20c997; color:#071711; }
 QTabBar::tab:selected { background:#20c997; color:#071711; }
 QProgressBar::chunk { background:#20c997; }
+QLabel#heroKicker { color:#65e6bd; }
+QFrame#homeHero { border-color:#28664f; border-left-color:#20c997; }
 """,
     "violet": """
-QPushButton { background:#a875ff; color:#160b24; }
-QPushButton:hover { background:#c5a4ff; color:#160b24; }
-QPushButton#primary, QPushButton#account { background:#a875ff; color:#160b24; }
 QListWidget#navigation::item:selected { background:#a875ff; color:#160b24; }
 QTabBar::tab:selected { background:#a875ff; color:#160b24; }
 QProgressBar::chunk { background:#a875ff; }
+QLabel#heroKicker { color:#c5a4ff; }
+QFrame#homeHero { border-color:#584080; border-left-color:#a875ff; }
+""",
+    "crimson": """
+QListWidget#navigation::item:selected { background:#ef5b68; color:#1b090c; }
+QTabBar::tab:selected { background:#ef5b68; color:#1b090c; }
+QProgressBar::chunk { background:#ef5b68; }
+QLabel#heroKicker { color:#ff9099; }
+QFrame#homeHero { border-color:#71313a; border-left-color:#ef5b68; }
+""",
+    "arctic": """
+QListWidget#navigation::item:selected { background:#70d9dc; color:#071719; }
+QTabBar::tab:selected { background:#70d9dc; color:#071719; }
+QProgressBar::chunk { background:#70d9dc; }
+QLabel#heroKicker { color:#9bf0ec; }
+QFrame#homeHero { border-color:#28666a; border-left-color:#70d9dc; }
 """
 }
 
@@ -1174,6 +1194,7 @@ class LumenWindow(QMainWindow):
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(1120, 720)
+        self.setMinimumSize(980, 620)
 
         self.minecraft_dir = Path(paths.minecraft_dir())
         self.profile_db = OfflineProfileDB(
@@ -1232,6 +1253,9 @@ class LumenWindow(QMainWindow):
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
         self.navigation.setFixedWidth(178)
+        self.navigation.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.setUniformItemSizes(True)
         self.page_stack = QStackedWidget()
         pages = [
             ("HOME", self.home_tab()),
@@ -1264,28 +1288,54 @@ class LumenWindow(QMainWindow):
         self.page_stack.setCurrentIndex(index)
         page = self.page_stack.currentWidget()
         page.move(28, 0)
-        animation = QPropertyAnimation(page, b"pos", page)
-        animation.setDuration(260)
-        animation.setStartValue(QPoint(28, 0))
-        animation.setEndValue(QPoint(0, 0))
-        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        page._tab_animation = animation
-        animation.start()
+        slide = QPropertyAnimation(page, b"pos", page)
+        slide.setDuration(220)
+        slide.setStartValue(QPoint(28, 0))
+        slide.setEndValue(QPoint(0, 0))
+        slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        page._tab_animation = slide
+        opacity = getattr(page, "_tab_opacity_effect", None)
+        if opacity is None:
+            opacity = QGraphicsOpacityEffect(page)
+            page.setGraphicsEffect(opacity)
+            page._tab_opacity_effect = opacity
+        fade = QPropertyAnimation(opacity, b"opacity", page)
+        fade.setDuration(220)
+        fade.setStartValue(0.65)
+        fade.setEndValue(1.0)
+        fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        page._fade_animation = fade
+        slide.start()
+        fade.start()
 
     def home_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        title = QLabel("Play locally")
-        title.setObjectName("title")
-        layout.addWidget(title)
-        layout.addWidget(muted_label(
-            "Prepared assets launch without Microsoft, Xbox, or downloader calls."
+        hero = QFrame()
+        hero.setObjectName("homeHero")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(22, 18, 22, 18)
+        kicker = QLabel("LUMEN  //  OFFLINE CLIENT")
+        kicker.setObjectName("heroKicker")
+        hero_layout.addWidget(kicker)
+        headline = QLabel("Your Minecraft starts here.")
+        headline.setObjectName("heroTitle")
+        hero_layout.addWidget(headline)
+        hero_layout.addWidget(muted_label(
+            "Prepared game assets launch locally, without Microsoft, Xbox, or downloader calls."
         ))
+        self.home_profile_summary = muted_label("Offline profile not selected")
+        hero_layout.addWidget(self.home_profile_summary)
+        layout.addWidget(hero)
 
-        card = QWidget()
+        card = QFrame()
+        card.setObjectName("instanceCard")
         grid = QGridLayout(card)
-        grid.addWidget(QLabel("Instance"), 0, 0)
+        grid.setContentsMargins(18, 14, 18, 14)
+        instance_label = QLabel("SELECTED INSTANCE")
+        instance_label.setObjectName("heroKicker")
+        grid.addWidget(instance_label, 0, 0)
         self.home_version = QComboBox()
         self.home_version.setEditable(True)
         self.home_version.addItem("No instances")
@@ -1296,6 +1346,13 @@ class LumenWindow(QMainWindow):
         self.play_button.clicked.connect(self.launch_game)
         grid.addWidget(self.play_button, 1, 0, 1, 2)
         layout.addWidget(card)
+
+        actions = QHBoxLayout()
+        manage_instances = QPushButton("MANAGE INSTANCES")
+        manage_instances.clicked.connect(lambda: self.navigation.setCurrentRow(1))
+        actions.addWidget(manage_instances)
+        actions.addStretch()
+        layout.addLayout(actions)
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -1400,9 +1457,11 @@ class LumenWindow(QMainWindow):
         try:
             profile = self.profile_db.get_active_profile()
             self.account_button.setText(f"●  {profile.username}  •  OFFLINE")
+            self.home_profile_summary.setText(f"ACTIVE PROFILE  •  {profile.username}")
         except RuntimeError:
             profile = None
             self.account_button.setText("＋  ADD OFFLINE ACCOUNT")
+            self.home_profile_summary.setText("Create an offline profile to start playing")
         if hasattr(self, "skins_tab"):
             self.skins_tab.set_profile(profile)
 

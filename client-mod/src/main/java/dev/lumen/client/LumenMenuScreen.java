@@ -20,35 +20,36 @@ public final class LumenMenuScreen extends Screen {
     @Override
     protected void init() {
         int center = width / 2;
-        int left = center - 154;
-        int right = center + 8;
-        int top = height / 2 - 82;
-        int buttonWidth = 146;
+        int panelWidth = Math.min(520, Math.max(304, width - 20));
+        int left = center - panelWidth / 2 + 12;
+        int buttonWidth = (panelWidth - 32) / 2;
+        int right = left + buttonWidth + 8;
+        int top = height / 2 - 105;
         int buttonHeight = 20;
-        int row = 25;
+        int row = 24;
 
         addRenderableWidget(toggle("FPS HUD", LumenClient::isFpsEnabled,
-                LumenClient::setFpsEnabled, left, top, buttonWidth, buttonHeight));
+                LumenClient::setFpsEnabled, left, top + 48, buttonWidth, buttonHeight));
         addRenderableWidget(toggle("CPS counter", LumenClient::isCpsEnabled,
-                LumenClient::setCpsEnabled, right, top, buttonWidth, buttonHeight));
+                LumenClient::setCpsEnabled, right, top + 48, buttonWidth, buttonHeight));
         addRenderableWidget(toggle("Keystrokes", LumenClient::isKeysEnabled,
-                LumenClient::setKeysEnabled, left, top + row, buttonWidth, buttonHeight));
+                LumenClient::setKeysEnabled, left, top + 48 + row, buttonWidth, buttonHeight));
         addRenderableWidget(toggle("Armor HUD", LumenClient::isArmorEnabled,
-                LumenClient::setArmorEnabled, right, top + row, buttonWidth, buttonHeight));
+                LumenClient::setArmorEnabled, right, top + 48 + row, buttonWidth, buttonHeight));
         addRenderableWidget(toggle("Potion HUD", LumenClient::isPotionsEnabled,
-                LumenClient::setPotionsEnabled, left, top + 2 * row, buttonWidth, buttonHeight));
+                LumenClient::setPotionsEnabled, left, top + 48 + 2 * row, buttonWidth, buttonHeight));
         addRenderableWidget(toggle("HUD visibility", LumenClient::isHudVisible,
-                LumenClient::setHudVisible, right, top + 2 * row, buttonWidth, buttonHeight));
+                LumenClient::setHudVisible, right, top + 48 + 2 * row, buttonWidth, buttonHeight));
 
         addRenderableWidget(Button.builder(Component.literal("LOW-END • MAX FPS"),
                 button -> LumenClient.applyLowEndPreset())
-                .bounds(left, top + 4 * row, buttonWidth, 22).build());
+                .bounds(left, top + 126, buttonWidth, 22).build());
         addRenderableWidget(Button.builder(Component.literal("BALANCED"),
                 button -> LumenClient.applyBalancedPreset())
-                .bounds(right, top + 4 * row, buttonWidth, 22).build());
+                .bounds(right, top + 126, buttonWidth, 22).build());
         addRenderableWidget(Button.builder(Component.literal("DONE"),
                 button -> onClose())
-                .bounds(center - 70, top + 6 * row, 140, 22).build());
+                .bounds(center - 70, top + 158, 140, 22).build());
     }
 
     private Button toggle(String name, BooleanSupplier getter, Consumer<Boolean> setter,
@@ -63,24 +64,25 @@ public final class LumenMenuScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics, mouseX, mouseY, partialTick);
-        int panelWidth = 340;
-        int panelHeight = 215;
+        int panelWidth = Math.min(520, Math.max(304, width - 20));
+        int panelHeight = 210;
         int left = (width - panelWidth) / 2;
         int top = (height - panelHeight) / 2 - 4;
         graphics.fill(left, top, left + panelWidth, top + panelHeight, 0xE9101318);
         graphics.fill(left, top, left + panelWidth, top + 3, 0xFFF2B90B);
-        graphics.drawCenteredString(font, "LUMEN  •  CLIENT CONTROL CENTER",
+        graphics.fill(left, top + 3, left + 1, top + panelHeight - 1, 0xAA59440C);
+        graphics.fill(left + panelWidth - 1, top + 3, left + panelWidth, top + panelHeight - 1, 0xAA59440C);
+        graphics.drawCenteredString(font, "LUMEN  •  CLIENT HUB",
                 width / 2, top + 12, 0xFFFFD34D);
-        graphics.drawCenteredString(font, "F6 menu     •     F7 show/hide HUD",
+        String controls = width >= 420 ? "F6 HUB  •  F7 HUD  •  HUD + PERFORMANCE CONTROLS"
+                : "HUD + PERFORMANCE CONTROLS";
+        graphics.drawCenteredString(font, controls,
                 width / 2, top + 30, 0xFFB7C0CC);
         String account = System.getProperty("lumen.account.name", "Offline profile");
-        graphics.drawCenteredString(font, "Profile: " + account, width / 2,
-                top + panelHeight - 36, 0xFFB7C0CC);
         String skin = System.getProperty("lumen.skin.path", "");
         graphics.drawCenteredString(font,
-                skin.isBlank() ? "Skin: default  •  choose one in Lumen Launcher"
-                        : "Skin: local  •  change it in Lumen Launcher",
-                width / 2, top + panelHeight - 23, 0xFFFFD34D);
+                "Profile: " + account + "  •  Skin: " + (skin.isBlank() ? "default" : "local"),
+                width / 2, top + panelHeight - 22, 0xFFB7C0CC);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
