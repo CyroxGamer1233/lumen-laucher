@@ -98,14 +98,35 @@ class InstallLogDialog(QDialog):
 
 
 class InstanceDialog(QDialog):
-    def __init__(self, instance=None, parent=None):
+    loadVersionsRequested = Signal()
+
+    def __init__(self, instance=None, parent=None, available_versions=None):
         super().__init__(parent)
         self.instance = instance
         self.setWindowTitle("Edit instance" if instance else "New instance")
         form = QFormLayout(self)
         self.name = QLineEdit()
         self.name.setPlaceholderText("My Fabric Profile")
-        self.version = QLineEdit("1.21.1")
+        self.version = QComboBox()
+        self.version.setEditable(True)
+        self.version.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.version.addItems(available_versions or [])
+        self.version.setCurrentText(instance.version if instance else "1.21.1")
+        self.version.setToolTip(
+            "Choose any Mojang release or snapshot, or enter an installed/custom version ID."
+        )
+        self.version_status = QLabel(
+            "Type a version ID, or load Mojang's full version list."
+        )
+        self.version_status.setObjectName("muted")
+        self.load_versions_button = QPushButton("LOAD VERSION LIST")
+        self.load_versions_button.clicked.connect(self.loadVersionsRequested.emit)
+        version_layout = QVBoxLayout()
+        version_layout.addWidget(self.version)
+        version_actions = QHBoxLayout()
+        version_actions.addWidget(self.version_status, 1)
+        version_actions.addWidget(self.load_versions_button)
+        version_layout.addLayout(version_actions)
         self.loader = QComboBox()
         self.loader.addItems(["vanilla", "fabric", "forge", "neoforge", "quilt"])
         self.ram = QSpinBox()
@@ -121,12 +142,11 @@ class InstanceDialog(QDialog):
         path_row.addWidget(browse)
         if instance:
             self.name.setText(instance.name)
-            self.version.setText(instance.version)
             self.loader.setCurrentText(instance.loader)
             self.ram.setValue(instance.ram_mb)
             self.path.setText(getattr(instance, "path", "") or "")
         form.addRow("Instance name", self.name)
-        form.addRow("Minecraft version", self.version)
+        form.addRow("Minecraft version", version_layout)
         form.addRow("Loader", self.loader)
         form.addRow("RAM (MB)", self.ram)
         form.addRow("Instance folder", path_row)
@@ -139,6 +159,15 @@ class InstanceDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
 
+    def set_available_versions(self, versions):
+        current = self.version.currentText()
+        self.version.blockSignals(True)
+        self.version.clear()
+        self.version.addItems(versions)
+        self.version.setCurrentText(current)
+        self.version.blockSignals(False)
+        self.version_status.setText(f"Loaded {len(versions)} Mojang and installed versions.")
+
     def browse_path(self):
         selected = QFileDialog.getExistingDirectory(self, "Choose instance folder")
         if selected:
@@ -146,7 +175,7 @@ class InstanceDialog(QDialog):
 
     def accept(self):
         name = self.name.text().strip()
-        if not name or not self.version.text().strip():
+        if not name or not self.version.currentText().strip():
             QMessageBox.warning(self, "Incomplete", "Name and version are required")
             return
         reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
@@ -164,7 +193,7 @@ class InstanceDialog(QDialog):
             return
         self.instance = Instance(
             name=name,
-            version=self.version.text().strip(),
+            version=self.version.currentText().strip(),
             loader=self.loader.currentText(),
             ram_mb=self.ram.value(),
             installed_version=(self.instance.installed_version if self.instance else None),
@@ -205,16 +234,17 @@ class InstanceInstallWorker(QThread):
                 self.instance.version, self.directory, callback=callback
             )
 
+            self.status.emit(f"Preparing Java for Minecraft {self.instance.version}...")
+            java_executable = ensure_java(
+                self.instance.version,
+                self.directory,
+                offline=False,
+                status=self.status.emit,
+            )
             if self.instance.loader == "vanilla":
                 self.instance.installed_version = None
             else:
                 self.status.emit(f"Preparing Java for {self.instance.loader}...")
-                java_executable = ensure_java(
-                    self.instance.version,
-                    self.directory,
-                    offline=False,
-                    status=self.status.emit,
-                )
                 loader = minecraft_launcher_lib.mod_loader.get_mod_loader(
                     self.instance.loader
                 )
@@ -270,6 +300,9 @@ class InstancesTab(QWidget):
         self.on_selected = on_selected
         self.worker = None
         self.install_log = None
+        self.available_versions = ["1.21.1"]
+        self.version_worker = None
+        self.active_dialog = None
 
         layout = QVBoxLayout(self)
         title = QLabel("Instances")
@@ -355,27 +388,60 @@ class InstancesTab(QWidget):
                 self.on_selected(instance)
 
     def new_instance(self):
-        dialog = InstanceDialog(parent=self)
+        dialog = InstanceDialog(parent=self, available_versions=self.available_versions)
+        self._show_instance_dialog(dialog)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.store.add(dialog.instance)
             self.refresh()
             self.list.setCurrentRow(len(self.store.instances) - 1)
+
+    def _show_instance_dialog(self, dialog):
+        self.active_dialog = dialog
+        dialog.loadVersionsRequested.connect(self.load_available_versions)
+        dialog.finished.connect(lambda _result: setattr(self, "active_dialog", None))
+
+    def load_available_versions(self):
+        if self.version_worker and self.version_worker.isRunning():
+            return
+        self.version_worker = VersionWorker(paths.minecraft_dir())
+        self.version_worker.loaded.connect(self.set_available_versions)
+        self.version_worker.failed.connect(self.version_list_failed)
+        if self.active_dialog:
+            self.active_dialog.load_versions_button.setEnabled(False)
+            self.active_dialog.version_status.setText("Loading Mojang version list...")
+        self.version_worker.finished.connect(self._version_list_finished)
+        self.version_worker.start()
+
+    def set_available_versions(self, versions):
+        if not versions:
+            return
+        self.available_versions = list(dict.fromkeys(versions))
+        if self.active_dialog:
+            self.active_dialog.set_available_versions(self.available_versions)
+
+    def version_list_failed(self, error):
+        if self.active_dialog:
+            self.active_dialog.version_status.setText(f"Could not load versions: {error}")
+
+    def _version_list_finished(self):
+        if self.active_dialog:
+            self.active_dialog.load_versions_button.setEnabled(True)
 
     def edit_selected(self):
         instance = self.current()
         if not instance:
             self.status.setText("Select an instance first")
             return
-        dialog = InstanceDialog(instance, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        self.store.add(dialog.instance)
-        self.refresh()
-        self.list.setCurrentRow(next(
-            (index for index, item in enumerate(self.store.instances)
-             if item.name == dialog.instance.name), 0
-        ))
-        self.status.setText("Instance settings saved")
+        dialog = InstanceDialog(instance, self, self.available_versions)
+        self._show_instance_dialog(dialog)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.store.add(dialog.instance)
+            self.refresh()
+            self.list.setCurrentRow(next(
+                (index for index, item in enumerate(self.store.instances)
+                 if item.name == dialog.instance.name), 0
+            ))
+            self.status.setText("Instance settings saved")
 
     def toggle_mods(self):
         instance = self.current()
@@ -463,6 +529,11 @@ class InstancesTab(QWidget):
         self.status.setText(error)
         if self.install_log:
             self.install_log.finished(f"\nFAILED\n{error}", success=False)
+
+    def set_available_versions(self, versions):
+        if not versions:
+            return
+        self.available_versions = list(dict.fromkeys(versions))
 
     def open_directory(self):
         instance = self.current()

@@ -24,7 +24,6 @@ public abstract class ScreenThemeMixin {
     private void lumen$applyUiAccent(GuiGraphics graphics, int mouseX, int mouseY,
                                      float partialTick, CallbackInfo callback) {
         if ((Object) this instanceof LumenMenuScreen) return;
-        graphics.fill(0, 0, width, height, 0x1806080A);
-        graphics.fill(0, 0, width, 2, 0xDDF2B90B);
+        graphics.fill(0, 0, width, height, 0x0806080A);
     }
 }

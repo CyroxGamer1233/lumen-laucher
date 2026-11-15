@@ -10,8 +10,8 @@ Cross-platform Python launcher for Minecraft: Java Edition + a companion Fabric 
 | Local offline profiles (`offline_profiles.json`), network-free launch path | Implemented, covered by tests with a faked `minecraft-launcher-lib` |
 | Microsoft/Xbox/Minecraft auth (device-code flow) | Implemented, **not run against live services** (needs your Azure app) |
 | Install/launch via minecraft-launcher-lib | Implemented, **not run end-to-end** (needs network + Minecraft files) |
-| PySide6 GUI | Offline home screen, animated page transitions, six accent themes; visual QA still needed |
-| Client mod (Fabric 1.21.1 HUD, client hub, and UI accents) | Source + Gradle build |
+| PySide6 GUI | Offline home screen, animated page transitions, six accent themes |
+| Client mod (Fabric 1.21.1 HUD, client hub, and UI accents) | Source + Gradle build; HUD widgets are movable in-game |
 | Installers / signing | Templates only |
 
 ## Quick start
@@ -46,7 +46,8 @@ require a prior Microsoft sign-in.
 
 Build the client mod: `cd client-mod && gradle wrapper && ./gradlew build` (JDK 21), then copy
 `build/libs/lumen-client-*.jar` plus Fabric API into the instance `mods/` folder.
-The mod adds subtle dark-and-gold accents to Minecraft screens while leaving Minecraft button colors unchanged.
+The instance version picker can load Mojang's full release, snapshot, and legacy version list on demand; you can also enter a custom version ID without making a network request. Install an instance before playing so its matching Java runtime is available offline. The companion Fabric client mod is currently built for Minecraft 1.21.1 only and is skipped for other game versions.
+The mod adds subtle dark screen accents without a top line or button recoloring. Press **F6** in-game to open the client hub and choose **EDIT HUD LAYOUT** to drag HUD widgets; positions are saved locally.
 
 See `docs/` for architecture, plan, security, testing and user guide.
 

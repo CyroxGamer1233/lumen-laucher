@@ -47,9 +47,12 @@ public final class LumenMenuScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("BALANCED"),
                 button -> LumenClient.applyBalancedPreset())
                 .bounds(right, top + 126, buttonWidth, 22).build());
+        addRenderableWidget(Button.builder(Component.literal("EDIT HUD LAYOUT"),
+                button -> Minecraft.getInstance().setScreen(new LumenHudEditorScreen(this)))
+                .bounds(left, top + 158, buttonWidth, 22).build());
         addRenderableWidget(Button.builder(Component.literal("DONE"),
                 button -> onClose())
-                .bounds(center - 70, top + 158, 140, 22).build());
+                .bounds(right, top + 158, buttonWidth, 22).build());
     }
 
     private Button toggle(String name, BooleanSupplier getter, Consumer<Boolean> setter,

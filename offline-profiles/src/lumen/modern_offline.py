@@ -1597,13 +1597,18 @@ class LumenWindow(QMainWindow):
                 f"-Dlumen.performance.preset={self.settings_tab.settings.jvm_profile}",
             ]
             jvm.extend(self.skins_tab.jvm_arguments(profile))
-            launcher = OfflineLauncher(self.minecraft_dir, self.profile_db)
+            launcher = OfflineLauncher(
+                self.minecraft_dir,
+                self.profile_db,
+                java_path=self.settings_tab.settings.java_path or "java",
+            )
             self.play_process = launcher.launch(
                 version,
                 profile=profile,
                 jvm_arguments=jvm,
                 game_directory=instance_root,
                 output=self.output_bridge.line.emit,
+                offline=True,
             )
             self.play_instance = self.current_instance
             self.play_started = time.time()

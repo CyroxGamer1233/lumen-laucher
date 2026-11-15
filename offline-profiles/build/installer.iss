@@ -1,5 +1,5 @@
 #define AppName "Lumen Offline Profiles"
-#define AppVersion "1.2.0"
+#define AppVersion "1.3.0"
 #define AppExeName "LumenOffline.exe"
 
 [Setup]

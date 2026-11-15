@@ -30,6 +30,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 /** Lightweight, client-only HUD and visual settings for Lumen's Fabric 1.21.1 profile. */
@@ -38,6 +40,7 @@ public final class LumenClient implements ClientModInitializer {
     private static final long[] FRAME_NANOS = new long[FRAME_WINDOW];
     private static final Deque<Long> LEFT_CLICKS = new ArrayDeque<>();
     private static final Deque<Long> RIGHT_CLICKS = new ArrayDeque<>();
+    private static final Map<String, int[]> HUD_POSITIONS = new HashMap<>();
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("lumen-client.properties");
 
     private static int frameCursor;
@@ -118,16 +121,18 @@ public final class LumenClient implements ClientModInitializer {
             String fpsText = frameCount < 2
                     ? "FPS " + minecraft.getFps()
                     : String.format("FPS %d  •  %.1f ms", minecraft.getFps(), frameMs);
-            drawChip(graphics, minecraft, 8, y, fpsText);
-            y += 22;
+            drawChip(graphics, minecraft, hudX("fps", 8), hudY("fps", y), fpsText);
         }
         if (cpsEnabled) {
-            drawChip(graphics, minecraft, 8, y,
+            drawChip(graphics, minecraft, hudX("cps", 8), hudY("cps", y + 22),
                     "CPS  L " + LEFT_CLICKS.size() + "  /  R " + RIGHT_CLICKS.size());
         }
-        if (keysEnabled) drawKeystrokes(graphics, minecraft, height);
-        if (armorEnabled) drawArmor(graphics, minecraft, height);
-        if (potionsEnabled) drawPotions(graphics, minecraft, width);
+        if (keysEnabled) drawKeystrokes(graphics, minecraft,
+                hudX("keys", 10), hudY("keys", height - 78));
+        if (armorEnabled) drawArmor(graphics, minecraft,
+                hudX("armor", 10), hudY("armor", height / 2 - 40));
+        if (potionsEnabled) drawPotions(graphics, minecraft, width,
+                hudX("potions", width - 190), hudY("potions", 10));
     }
 
     private static void drawChip(GuiGraphics graphics, Minecraft minecraft, int x, int y, String text) {
@@ -161,8 +166,8 @@ public final class LumenClient implements ClientModInitializer {
         while (!clicks.isEmpty() && now - clicks.peekFirst() > 1000) clicks.removeFirst();
     }
 
-    private static void drawKeystrokes(GuiGraphics g, Minecraft mc, int screenHeight) {
-        int x = 10, y = screenHeight - 78, size = 20, gap = 3;
+    private static void drawKeystrokes(GuiGraphics g, Minecraft mc, int x, int y) {
+        int size = 20, gap = 3;
         drawKey(g, mc, mc.options.keyUp, x + size + gap, y);
         drawKey(g, mc, mc.options.keyLeft, x, y + size + gap);
         drawKey(g, mc, mc.options.keyDown, x + size + gap, y + size + gap);
@@ -185,10 +190,9 @@ public final class LumenClient implements ClientModInitializer {
                 pressed ? 0xFF111318 : 0xFFF6F1E7);
     }
 
-    private static void drawArmor(GuiGraphics g, Minecraft mc, int screenHeight) {
+    private static void drawArmor(GuiGraphics g, Minecraft mc, int x, int y) {
         LocalPlayer player = mc.player;
         if (player == null) return;
-        int x = 10, y = screenHeight / 2 - 40;
         for (int slot = 3; slot >= 0; slot--) {
             ItemStack item = player.getInventory().getArmor(slot);
             if (!item.isEmpty()) g.renderItem(item, x, y);
@@ -196,22 +200,39 @@ public final class LumenClient implements ClientModInitializer {
         }
     }
 
-    private static void drawPotions(GuiGraphics g, Minecraft mc, int screenWidth) {
+    private static void drawPotions(GuiGraphics g, Minecraft mc, int screenWidth, int x, int y) {
         LocalPlayer player = mc.player;
         if (player == null) return;
-        int y = 10;
         for (MobEffectInstance effect : player.getActiveEffects()) {
             String name = effect.getEffect().value().getDisplayName().getString();
             String level = effect.getAmplifier() > 0 ? " " + (effect.getAmplifier() + 1) : "";
             int seconds = Math.max(0, effect.getDuration() / 20);
             String duration = String.format("%d:%02d", seconds / 60, seconds % 60);
             String line = name + level + "  " + duration;
-            int x = screenWidth - mc.font.width(line) - 18;
-            g.fill(x - 5, y - 3, screenWidth - 8, y + 14, 0xB80B0D10);
-            g.fill(x - 5, y - 3, x - 3, y + 14, 0xFFF2B90B);
-            g.drawString(mc.font, line, x, y, 0xFFF6F1E7, true);
+            int lineX = Math.min(x, screenWidth - mc.font.width(line) - 18);
+            g.fill(lineX - 5, y - 3, lineX + mc.font.width(line) + 5, y + 14, 0xB80B0D10);
+            g.fill(lineX - 5, y - 3, lineX - 3, y + 14, 0xFFF2B90B);
+            g.drawString(mc.font, line, lineX, y, 0xFFF6F1E7, true);
             y += 20;
         }
+    }
+
+    public static int hudX(String component, int fallback) {
+        int[] position = HUD_POSITIONS.get(component);
+        return position == null ? fallback : position[0];
+    }
+
+    public static int hudY(String component, int fallback) {
+        int[] position = HUD_POSITIONS.get(component);
+        return position == null ? fallback : position[1];
+    }
+
+    public static void setHudPosition(String component, int x, int y) {
+        HUD_POSITIONS.put(component, new int[]{x, y});
+    }
+
+    public static void saveHudConfiguration() {
+        saveConfiguration();
     }
 
     public static boolean isFpsEnabled() { return fpsEnabled; }
@@ -266,6 +287,18 @@ public final class LumenClient implements ClientModInitializer {
                 keysEnabled = Boolean.parseBoolean(properties.getProperty("keystrokes", "true"));
                 armorEnabled = Boolean.parseBoolean(properties.getProperty("armor", "true"));
                 potionsEnabled = Boolean.parseBoolean(properties.getProperty("potions", "true"));
+                for (String component : new String[]{"fps", "cps", "keys", "armor", "potions"}) {
+                    String x = properties.getProperty("hud." + component + ".x");
+                    String y = properties.getProperty("hud." + component + ".y");
+                    if (x != null && y != null) {
+                        try {
+                            HUD_POSITIONS.put(component, new int[]{
+                                    Integer.parseInt(x), Integer.parseInt(y)});
+                        } catch (NumberFormatException ignored) {
+                            HUD_POSITIONS.remove(component);
+                        }
+                    }
+                }
             } catch (IOException ignored) {
                 // Keep safe defaults if the optional client HUD settings cannot be read.
             }
@@ -280,6 +313,10 @@ public final class LumenClient implements ClientModInitializer {
         properties.setProperty("keystrokes", Boolean.toString(keysEnabled));
         properties.setProperty("armor", Boolean.toString(armorEnabled));
         properties.setProperty("potions", Boolean.toString(potionsEnabled));
+        HUD_POSITIONS.forEach((component, position) -> {
+            properties.setProperty("hud." + component + ".x", Integer.toString(position[0]));
+            properties.setProperty("hud." + component + ".y", Integer.toString(position[1]));
+        });
         try {
             Files.createDirectories(CONFIG.getParent());
             try (OutputStream output = Files.newOutputStream(CONFIG)) {

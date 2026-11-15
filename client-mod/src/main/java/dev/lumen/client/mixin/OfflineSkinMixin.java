@@ -24,7 +24,7 @@ public abstract class OfflineSkinMixin {
     private static boolean lumen$attempted;
     private static ResourceLocation lumen$texture;
 
-    @Inject(method = "getSkin", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getSkin", at = @At("RETURN"), cancellable = true)
     private void lumen$useLocalSkin(CallbackInfoReturnable<PlayerSkin> callback) {
         String profileUuid = System.getProperty("lumen.skin.uuid", "");
         String skinPath = System.getProperty("lumen.skin.path", "");
@@ -37,6 +37,7 @@ public abstract class OfflineSkinMixin {
         if (texture == null) return;
 
         PlayerSkin vanilla = callback.getReturnValue();
+        if (vanilla == null) return;
         String modelName = System.getProperty("lumen.skin.model", "wide");
         PlayerSkin.Model model = "slim".equalsIgnoreCase(modelName)
                 ? PlayerSkin.Model.SLIM : PlayerSkin.Model.WIDE;

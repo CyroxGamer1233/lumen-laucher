@@ -44,7 +44,7 @@ class OfflineLauncher:
             version,
             self.minecraft_directory,
             explicit=self.java_path if self.java_path != "java" else None,
-            offline=False,
+            offline=True,
         )
 
         options = {
@@ -73,10 +73,12 @@ class OfflineLauncher:
         jvm_arguments: list[str] | None = None,
         output: OutputCallback | None = None,
         game_directory: str | Path | None = None,
+        offline: bool = True,
     ) -> subprocess.Popen:
         process = subprocess.Popen(
             self.build_command(
-                version, profile, jvm_arguments, game_directory=game_directory
+                version, profile, jvm_arguments, game_directory=game_directory,
+                offline=offline,
             ),
             cwd=Path(game_directory or self.minecraft_directory),
             stdin=subprocess.DEVNULL,
