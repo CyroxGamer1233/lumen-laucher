@@ -289,6 +289,22 @@ class InstanceInstallWorker(QThread):
             self.failed.emit(str(error))
 
 
+class VersionWorker(QThread):
+    loaded = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, directory: Path):
+        super().__init__()
+        self.directory = directory
+
+    def run(self):
+        try:
+            versions = minecraft_launcher_lib.utils.get_available_versions(self.directory)
+            self.loaded.emit([str(version["id"]) for version in versions])
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class InstancesTab(QWidget):
     selected = Signal(object)
 
@@ -529,11 +545,6 @@ class InstancesTab(QWidget):
         self.status.setText(error)
         if self.install_log:
             self.install_log.finished(f"\nFAILED\n{error}", success=False)
-
-    def set_available_versions(self, versions):
-        if not versions:
-            return
-        self.available_versions = list(dict.fromkeys(versions))
 
     def open_directory(self):
         instance = self.current()

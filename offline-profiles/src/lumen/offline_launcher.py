@@ -30,6 +30,7 @@ class OfflineLauncher:
         profile: OfflineProfile | None = None,
         jvm_arguments: list[str] | None = None,
         game_directory: str | Path | None = None,
+        offline: bool = True,
     ) -> list[str]:
         profile = profile or self.profiles.get_active_profile()
         version_json = (
@@ -44,7 +45,7 @@ class OfflineLauncher:
             version,
             self.minecraft_directory,
             explicit=self.java_path if self.java_path != "java" else None,
-            offline=True,
+            offline=offline,
         )
 
         options = {
