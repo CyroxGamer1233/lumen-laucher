@@ -5,7 +5,6 @@ import json
 import os
 import ssl
 import tempfile
-import threading
 import time
 import urllib.parse
 import urllib.request
@@ -23,7 +22,8 @@ from .java_runtime import ensure_java
 
 StatusCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, int], None]
-MAX_DOWNLOAD_WORKERS = 8
+MAX_DOWNLOAD_WORKERS = 4
+DOWNLOAD_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -51,15 +51,25 @@ def _safe_destination(root: Path, relative_name: str) -> Path:
     return destination
 
 
+def _file_digest(path: Path, algorithm: str) -> str:
+    digest = hashlib.new(algorithm)
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(256 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _download_one(root: Path, entry: dict) -> tuple[Path, bool]:
     relative_name = str(entry.get("path", ""))
     destination = _safe_destination(root, relative_name)
     hashes = entry.get("hashes") or {}
     algorithm = "sha1" if hashes.get("sha1") else "sha512" if hashes.get("sha512") else None
     expected = hashes.get(algorithm) if algorithm else None
+    if not algorithm or not expected:
+        raise RuntimeError(f"No supported integrity hash was provided for {relative_name}")
 
     if destination.is_file() and expected:
-        digest = hashlib.new(algorithm, destination.read_bytes()).hexdigest()
+        digest = _file_digest(destination, algorithm)
         if digest.lower() == expected.lower():
             return destination, True
 
@@ -79,35 +89,30 @@ def _download_one(root: Path, entry: dict) -> tuple[Path, bool]:
             parsed = urllib.parse.urlparse(str(url))
             if parsed.scheme != "https" or not parsed.netloc:
                 raise RuntimeError(f"Refusing non-HTTPS modpack URL for {relative_name}")
-            try:
-                request = urllib.request.Request(
-                    str(url), headers={"User-Agent": "LumenLauncher/1.0"}
-                )
-                digest = hashlib.new(algorithm) if algorithm else None
-                with open_url(request, timeout=45) as response, temporary.open("wb") as sink:
-                    while True:
-                        chunk = response.read(256 * 1024)
-                        if not chunk:
-                            break
-                        sink.write(chunk)
-                        if digest:
-                            digest.update(chunk)
-                if digest and digest.hexdigest().lower() != expected.lower():
-                    raise RuntimeError(f"Hash check failed for modpack file {relative_name}")
-                os.replace(temporary, destination)
-                return destination, False
-            except ssl.SSLCertVerificationError:
-                raise
-            except Exception as error:
-                last_error = error
-                temporary.unlink(missing_ok=True)
-                if url != urls[-1]:
-                    time.sleep(0.35)
-                    fd, temporary_name = tempfile.mkstemp(
-                        prefix=destination.name + ".", suffix=".part", dir=destination.parent
+            for attempt in range(DOWNLOAD_ATTEMPTS):
+                try:
+                    request = urllib.request.Request(
+                        str(url), headers={"User-Agent": "LumenLauncher/1.0"}
                     )
-                    os.close(fd)
-                    temporary = Path(temporary_name)
+                    digest = hashlib.new(algorithm)
+                    with open_url(request, timeout=45) as response, temporary.open("wb") as sink:
+                        while True:
+                            chunk = response.read(256 * 1024)
+                            if not chunk:
+                                break
+                            sink.write(chunk)
+                            digest.update(chunk)
+                    if digest.hexdigest().lower() != expected.lower():
+                        raise RuntimeError(f"Hash check failed for modpack file {relative_name}")
+                    os.replace(temporary, destination)
+                    return destination, False
+                except ssl.SSLCertVerificationError:
+                    raise
+                except Exception as error:
+                    last_error = error
+                    temporary.unlink(missing_ok=True)
+                    if attempt + 1 < DOWNLOAD_ATTEMPTS:
+                        time.sleep(0.35 * (attempt + 1))
         raise RuntimeError(f"Could not download {relative_name}: {last_error}") from last_error
     finally:
         temporary.unlink(missing_ok=True)
@@ -168,27 +173,35 @@ def install_modrinth_pack(
             progress(0, len(files))
             if files:
                 finished = 0
-                lock = threading.Lock()
+                failures = []
                 with ThreadPoolExecutor(max_workers=MAX_DOWNLOAD_WORKERS) as pool:
                     futures = {
                         pool.submit(_download_one, instance_root, entry): entry
                         for entry in files
                     }
-                    try:
-                        for future in as_completed(futures):
-                            entry = futures[future]
+                    for future in as_completed(futures):
+                        entry = futures[future]
+                        try:
                             path, cached = future.result()
-                            with lock:
-                                finished += 1
-                                progress(finished, len(files))
                             status(
                                 f"{'Already ready' if cached else 'Downloaded'} "
                                 f"{entry.get('path', path.name)}"
                             )
-                    except Exception:
-                        for future in futures:
-                            future.cancel()
-                        raise
+                        except Exception as error:
+                            failures.append((str(entry.get("path", "unknown file")), error))
+                            status(f"Failed {entry.get('path', 'unknown file')}: {error}")
+                        finished += 1
+                        progress(finished, len(files))
+                if failures:
+                    details = "\n".join(
+                        f"• {name}: {error}" for name, error in failures[:10]
+                    )
+                    remaining = len(failures) - 10
+                    if remaining:
+                        details += f"\n• and {remaining} more file(s)"
+                    raise RuntimeError(
+                        f"{len(failures)} required modpack file(s) could not be installed:\n{details}"
+                    )
 
             status("Applying modpack configuration files")
             _install_overrides(archive, instance_root)

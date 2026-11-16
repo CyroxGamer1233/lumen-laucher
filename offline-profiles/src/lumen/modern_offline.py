@@ -2,22 +2,23 @@ from __future__ import annotations
 
 import html
 import json
-import shutil
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import minecraft_launcher_lib
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint, QObject
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTransform, QPolygonF, QPointF, QRect,
+)
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame,
+    QApplication, QComboBox, QDialog, QFrame,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QFileDialog, QPlainTextEdit, QScrollArea, QSplashScreen, QStackedWidget,
-    QTextBrowser, QVBoxLayout, QWidget
+    QTextBrowser, QVBoxLayout, QWidget, QInputDialog
 )
 
 from lumen import logging_setup, paths
@@ -31,6 +32,7 @@ from lumen.client_mod import install_client_mod
 from lumen.java_runtime import ensure_java
 from lumen.offline_profiles import OfflineProfileDB
 from lumen.panels import ServersTab, SettingsTab
+from lumen.launch.jvm import build_jvm_args
 
 
 def resource_path(relative_path: str) -> Path:
@@ -65,6 +67,15 @@ QFrame#instanceCard {
 }
 QFrame, QListWidget, QPlainTextEdit {
     background:#13171c; border:1px solid #2c333c; border-radius:10px;
+}
+QTableWidget {
+    background:#13171c; alternate-background-color:#171c22;
+    color:#f6f1e7; gridline-color:#2c333c;
+    border:1px solid #2c333c; border-radius:8px;
+}
+QHeaderView::section {
+    background:#1b222a; color:#f6f1e7; border:0;
+    border-bottom:1px solid #3d4652; padding:7px; font-weight:700;
 }
 QPushButton {
     background:#f2b90b; color:#111318; border:0; border-radius:7px;
@@ -844,29 +855,179 @@ class AccountDialog(QDialog):
     def __init__(self, db: OfflineProfileDB, parent=None):
         super().__init__(parent)
         self.db = db
-        self.setWindowTitle("Offline account")
-        self.setMinimumWidth(360)
+        self.setWindowTitle("Offline profiles")
+        self.setMinimumSize(420, 360)
+        self.profile = None
 
-        self.name = QLineEdit()
-        self.name.setPlaceholderText("Enter local username")
-        form = QFormLayout(self)
-        form.addRow("Username", self.name)
+        layout = QVBoxLayout(self)
+        layout.addWidget(title_label("Offline profiles"))
+        layout.addWidget(muted_label("These local profiles never sign in to Microsoft or Xbox."))
+        self.profiles = QListWidget()
+        layout.addWidget(self.profiles, 1)
+        actions = QHBoxLayout()
+        add_button = QPushButton("ADD PROFILE")
+        add_button.clicked.connect(self.add_profile)
+        actions.addWidget(add_button)
+        select_button = QPushButton("USE SELECTED")
+        select_button.clicked.connect(self.use_selected)
+        actions.addWidget(select_button)
+        remove_button = QPushButton("REMOVE")
+        remove_button.setObjectName("secondary")
+        remove_button.clicked.connect(self.remove_selected)
+        actions.addWidget(remove_button)
+        layout.addLayout(actions)
+        close_button = QPushButton("CLOSE")
+        close_button.clicked.connect(self.reject)
+        layout.addWidget(close_button)
+        self.refresh_profiles()
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel
+    def refresh_profiles(self):
+        active = self.db.data.get("active")
+        self.profiles.clear()
+        for profile in self.db.list_profiles():
+            label = profile.username + ("  •  ACTIVE" if profile.username == active else "")
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, profile.username)
+            self.profiles.addItem(item)
+            if profile.username == active:
+                self.profiles.setCurrentItem(item)
+
+    def add_profile(self):
+        username, accepted = QInputDialog.getText(
+            self, "Add offline profile", "Local username:"
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
-
-    def accept(self):
+        if not accepted:
+            return
         try:
-            self.profile = self.db.add_profile(self.name.text())
+            profile = self.db.add_profile(username)
+            self.profile = self.db.set_active_profile(profile.username)
         except (ValueError, OSError) as error:
             QMessageBox.warning(self, "Invalid account", str(error))
             return
         super().accept()
+
+
+    def use_selected(self):
+        item = self.profiles.currentItem()
+        if item is None:
+            QMessageBox.information(self, "Select a profile", "Choose an offline profile first.")
+            return
+        try:
+            self.profile = self.db.set_active_profile(
+                item.data(Qt.ItemDataRole.UserRole)
+            )
+        except (KeyError, OSError) as error:
+            QMessageBox.warning(self, "Could not select profile", str(error))
+            self.refresh_profiles()
+            return
+        super().accept()
+
+    def remove_selected(self):
+        item = self.profiles.currentItem()
+        if item is None:
+            QMessageBox.information(self, "Select a profile", "Choose a profile to remove.")
+            return
+        username = item.data(Qt.ItemDataRole.UserRole)
+        answer = QMessageBox.question(
+            self, "Remove offline profile",
+            f"Remove the local profile '{username}'? This does not delete its saved skin.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.db.remove_profile(username)
+        except OSError as error:
+            QMessageBox.warning(self, "Could not remove profile", str(error))
+            return
+        self.refresh_profiles()
+
+
+class SkinPreview(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.skin = QImage()
+        self.model = "wide"
+        self.message = "Choose a skin image"
+        self.setMinimumSize(220, 220)
+        self.setStyleSheet(
+            "background:#0b0d10;border:1px solid #3d4652;border-radius:10px;"
+        )
+
+    def set_message(self, message: str):
+        self.skin = QImage()
+        self.message = message
+        self.update()
+
+    def set_skin(self, skin: QImage, model: str):
+        self.skin = skin
+        self.model = model
+        self.message = ""
+        self.update()
+
+    @staticmethod
+    def _face(painter: QPainter, skin: QImage, source: tuple[int, int, int, int],
+              points: list[tuple[float, float]]):
+        x, y, width, height = source
+        face = skin.copy(QRect(x, y, width, height))
+        source_quad = QPolygonF([
+            QPointF(0, 0), QPointF(width, 0),
+            QPointF(width, height), QPointF(0, height),
+        ])
+        destination_quad = QPolygonF([QPointF(px, py) for px, py in points])
+        transform = QTransform()
+        if QTransform.quadToQuad(source_quad, destination_quad, transform):
+            painter.save()
+            painter.setTransform(transform, True)
+            painter.drawImage(0, 0, face)
+            painter.restore()
+
+    def _box(self, painter, x, y, width, height, top, side, front, overlay=None):
+        scale = 4.5
+        depth = 2.0
+        left = (self.width() - 18 * scale) / 2 + x * scale
+        top_y = (self.height() - 32 * scale) / 2 + y * scale + 8
+        x2 = left + width * scale
+        y2 = top_y + height * scale
+        self._face(painter, self.skin, top, [
+            (left, top_y), (left + depth * scale, top_y - depth * scale),
+            (x2 + depth * scale, top_y - depth * scale), (x2, top_y),
+        ])
+        self._face(painter, self.skin, side, [
+            (x2, top_y), (x2 + depth * scale, top_y - depth * scale),
+            (x2 + depth * scale, y2 - depth * scale), (x2, y2),
+        ])
+        front_points = [
+            (left, top_y), (x2, top_y), (x2, y2), (left, y2),
+        ]
+        self._face(painter, self.skin, front, front_points)
+        if overlay:
+            self._face(painter, self.skin, overlay, front_points)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        if self.skin.isNull():
+            painter.setPen(QColor("#9ba4b0"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.message)
+            return
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#171c22"))
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 9, 9)
+
+        arm_width = 3 if self.model == "slim" else 4
+        left_arm_x = 1 if arm_width == 3 else 0
+        self._box(painter, left_arm_x, 8, arm_width, 12,
+                  (36, 48, 4, 4), (32, 52, 4, 12), (36, 52, 4, 12), (52, 52, 4, 12))
+        self._box(painter, 12, 8, arm_width, 12,
+                  (44, 16, 4, 4), (40, 20, 4, 12), (44, 20, 4, 12), (44, 36, 4, 12))
+        self._box(painter, 4, 8, 8, 12,
+                  (20, 16, 8, 4), (16, 20, 4, 12), (20, 20, 8, 12), (20, 36, 8, 12))
+        self._box(painter, 4, 20, 4, 12,
+                  (4, 16, 4, 4), (0, 20, 4, 12), (4, 20, 4, 12), (4, 36, 4, 12))
+        self._box(painter, 8, 20, 4, 12,
+                  (20, 48, 4, 4), (16, 52, 4, 12), (20, 52, 4, 12), (4, 52, 4, 12))
+        self._box(painter, 4, 0, 8, 8,
+                  (8, 0, 8, 8), (0, 8, 8, 8), (8, 8, 8, 8), (40, 8, 8, 8))
 
 
 class SkinsTab(QWidget):
@@ -893,12 +1054,8 @@ class SkinsTab(QWidget):
             "background:#13171c;border:1px solid #2c333c;border-radius:12px;"
         )
 
-        self.preview = QLabel("Choose a skin image")
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview = SkinPreview()
         self.preview.setFixedSize(220, 220)
-        self.preview.setStyleSheet(
-            "background:#0b0d10;border:1px solid #3d4652;border-radius:10px;"
-        )
         card_layout.addWidget(self.preview)
 
         controls = QVBoxLayout()
@@ -911,6 +1068,7 @@ class SkinsTab(QWidget):
         self.model_box = QComboBox()
         self.model_box.addItem("Classic (wide)", "wide")
         self.model_box.addItem("Slim (Alex)", "slim")
+        self.model_box.currentIndexChanged.connect(self.refresh_preview)
         model_row.addWidget(self.model_box, 1)
         controls.addLayout(model_row)
 
@@ -953,8 +1111,7 @@ class SkinsTab(QWidget):
         self.apply_button.setEnabled(False)
         if not profile:
             self.profile_label.setText("No offline account selected")
-            self.preview.setPixmap(QPixmap())
-            self.preview.setText("Add an offline account first")
+            self.preview.set_message("Add an offline account first")
             self.status.setText("Skins are saved per offline account.")
             return
 
@@ -967,17 +1124,19 @@ class SkinsTab(QWidget):
             self._show_image(QImage(str(path)))
             self.status.setText(f"Local skin ready for {profile.username}.")
         else:
-            self.preview.setPixmap(QPixmap())
-            self.preview.setText("No skin selected")
+            self.preview.set_message("No skin selected")
             self.status.setText("Choose a 64×64 PNG skin to use with this profile.")
 
     def _show_image(self, image: QImage):
-        pixmap = QPixmap.fromImage(image)
-        self.preview.setPixmap(pixmap.scaled(
-            192, 192, Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.FastTransformation,
-        ))
-        self.preview.setText("")
+        self.preview.set_skin(image, self.model_box.currentData() or "wide")
+
+    def refresh_preview(self, *_):
+        image = self.pending_image
+        if image is None:
+            path = self._skin_path()
+            image = QImage(str(path)) if path and path.is_file() else QImage()
+        if not image.isNull():
+            self._show_image(image)
 
     def choose_skin(self):
         if not self.profile:
@@ -1015,6 +1174,7 @@ class SkinsTab(QWidget):
             json.dumps(values, indent=2), encoding="utf-8"
         )
         self.pending_image = None
+        self._show_image(QImage(str(destination)))
         self.apply_button.setEnabled(False)
         self.status.setText(
             "Skin applied locally. Launch a Fabric 1.21.1 instance to see it in-game."
@@ -1252,8 +1412,8 @@ class LumenWindow(QMainWindow):
         shell.setSpacing(14)
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
-        self.navigation.setFixedWidth(178)
-        self.navigation.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.setFixedWidth(190)
+        self.navigation.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.navigation.setUniformItemSizes(True)
         self.page_stack = QStackedWidget()
@@ -1269,7 +1429,12 @@ class LumenWindow(QMainWindow):
         ]
         for label, page in pages:
             self.navigation.addItem(QListWidgetItem(label))
-            self.page_stack.addWidget(page)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setWidget(page)
+            self.page_stack.addWidget(scroll)
         self.navigation.currentRowChanged.connect(self.switch_page)
         self.navigation.setCurrentRow(0)
         shell.addWidget(self.navigation)
@@ -1467,8 +1632,9 @@ class LumenWindow(QMainWindow):
 
     def manage_account(self):
         dialog = AccountDialog(self.profile_db, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.refresh_account()
+        result = dialog.exec()
+        self.refresh_account()
+        if result == QDialog.DialogCode.Accepted and dialog.profile:
             self.log.appendPlainText(
                 f"Offline account ready: {dialog.profile.username}"
             )
@@ -1590,12 +1756,14 @@ class LumenWindow(QMainWindow):
                 getattr(self.current_instance, "path", "")
                 or paths.instance_dir(self.current_instance.name)
             )
-            jvm = [
-                f"-Xmx{self.current_instance.ram_mb}M",
-                f"-Xms{min(1024, self.current_instance.ram_mb)}M",
+            jvm = build_jvm_args(
+                self.settings_tab.settings.jvm_profile,
+                self.current_instance.ram_mb,
+            )
+            jvm.extend([
                 f"-Dlumen.account.name={profile.username}",
                 f"-Dlumen.performance.preset={self.settings_tab.settings.jvm_profile}",
-            ]
+            ])
             jvm.extend(self.skins_tab.jvm_arguments(profile))
             launcher = OfflineLauncher(
                 self.minecraft_dir,
@@ -1621,6 +1789,8 @@ class LumenWindow(QMainWindow):
             self.launch_dialog.append_line(
                 f"[Lumen] Starting {self.current_instance.name} • Minecraft {version} • {profile.username}"
             )
+            if self.settings_tab.settings.close_launcher_on_launch:
+                QTimer.singleShot(0, self.close)
         except Exception as error:
             if self.launch_dialog is not None:
                 self.launch_dialog.set_failed(str(error))

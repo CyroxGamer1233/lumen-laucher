@@ -31,3 +31,20 @@ def test_download_name_ignores_query_string():
 def test_new_visual_themes_are_valid_settings():
     assert config._validate(config.Settings(theme="crimson")).theme == "crimson"
     assert config._validate(config.Settings(theme="arctic")).theme == "arctic"
+
+
+def test_close_launcher_preference_round_trips(tmp_path):
+    path = tmp_path / "settings.json"
+    settings = config.Settings(close_launcher_on_launch=True)
+
+    config.save(settings, path)
+
+    assert config.load(path).close_launcher_on_launch is True
+
+
+def test_invalid_close_launcher_preference_defaults_to_false():
+    settings = config._validate(
+        config.Settings(close_launcher_on_launch="false")
+    )
+
+    assert settings.close_launcher_on_launch is False

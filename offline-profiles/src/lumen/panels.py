@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import json
 import os
 import platform
 import re
-import socket
 import subprocess
-import time
-from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QThread, QTimer, Signal, Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QApplication, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QHeaderView, QTableWidget, QTableWidgetItem,
 )
 
 from lumen import config, paths
+from lumen.server_status import parse_server_address, query_minecraft_server
 from packaging.version import Version
 
 RELEASE_API = "https://api.github.com/repos/CyroxGamer1233/lumen-laucher/releases/latest"
@@ -23,20 +26,28 @@ INSTALLER_NAME = "LumenOfflineSetup.exe"
 
 
 class ServerCheckWorker(QThread):
-    result = Signal(str)
+    result = Signal(str, object, str)
+    done = Signal()
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, addresses: list[str]):
         super().__init__()
-        self.host, self.port = host, port
+        self.addresses = addresses
 
     def run(self):
-        started = time.perf_counter()
-        try:
-            with socket.create_connection((self.host, self.port), timeout=4):
-                latency = round((time.perf_counter() - started) * 1000)
-            self.result.emit(f"ONLINE  •  {self.host}:{self.port}  •  {latency} ms")
-        except OSError:
-            self.result.emit(f"OFFLINE  •  {self.host}:{self.port}")
+        for address in self.addresses:
+            try:
+                host, port = parse_server_address(address)
+                self.result.emit(address, query_minecraft_server(host, port), "")
+            except (OSError, RuntimeError, ValueError) as error:
+                self.result.emit(address, None, str(error))
+        self.done.emit()
+
+
+POPULAR_SERVERS = (
+    "mc.hypixel.net",
+    "play.cubecraft.net",
+    "mccentral.org",
+)
 
 
 class ServersTab(QWidget):
@@ -47,41 +58,231 @@ class ServersTab(QWidget):
         title.setObjectName("title")
         layout.addWidget(title)
 
-        row = QHBoxLayout()
+        controls = QHBoxLayout()
         self.address = QLineEdit()
         self.address.setPlaceholderText("play.example.net:25565")
-        row.addWidget(self.address, 1)
-        self.check = QPushButton("CHECK STATUS")
+        controls.addWidget(self.address, 1)
+        self.add_button = QPushButton("ADD SERVER")
+        self.add_button.clicked.connect(self.add_server)
+        controls.addWidget(self.add_button)
+        layout.addLayout(controls)
+
+        actions = QHBoxLayout()
+        self.popular = QComboBox()
+        self.popular.addItem("Popular servers", "")
+        for address in POPULAR_SERVERS:
+            self.popular.addItem(address, address)
+        actions.addWidget(self.popular, 1)
+        self.add_popular_button = QPushButton("ADD POPULAR")
+        self.add_popular_button.clicked.connect(self.add_popular)
+        actions.addWidget(self.add_popular_button)
+        self.check = QPushButton("REFRESH STATUS")
         self.check.clicked.connect(self.check_server)
-        row.addWidget(self.check)
-        layout.addLayout(row)
+        actions.addWidget(self.check)
+        layout.addLayout(actions)
+
+        filters = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Filter servers or MOTD")
+        self.search.textChanged.connect(self.apply_filter)
+        filters.addWidget(self.search, 1)
+        self.online_filter = QComboBox()
+        self.online_filter.addItems(["All servers", "Online", "Offline"])
+        self.online_filter.currentIndexChanged.connect(self.apply_filter)
+        filters.addWidget(self.online_filter)
+        self.remove_button = QPushButton("REMOVE SELECTED")
+        self.remove_button.clicked.connect(self.remove_selected)
+        filters.addWidget(self.remove_button)
+        layout.addLayout(filters)
 
         self.status = QLabel("No server checked")
         self.status.setObjectName("muted")
         layout.addWidget(self.status)
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["Server", "Status", "Version", "Players", "Ping", "MOTD"]
+        )
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setWordWrap(True)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.table.cellDoubleClicked.connect(self.select_server)
+        layout.addWidget(self.table, 1)
+        self.server_path = paths.config_path().parent / "servers.json"
+        self.save_error = None
+        self.server_data = self._load_servers()
+        self._populate_table()
         layout.addStretch()
 
-    def check_server(self):
-        raw = self.address.text().strip()
-        host, _, port_text = raw.partition(":")
+    def _load_servers(self) -> dict[str, dict]:
         try:
-            port = int(port_text or "25565")
-        except ValueError:
-            self.status.setText("Invalid port")
-            return
-        if not host:
-            self.status.setText("Enter a server address")
-            return
+            data = json.loads(self.server_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {address: {} for address in POPULAR_SERVERS}
+        except (OSError, ValueError) as error:
+            self.status.setText(f"Could not load saved servers: {error}")
+            return {address: {} for address in POPULAR_SERVERS}
+        if not isinstance(data, dict):
+            self.status.setText("Saved server list is invalid; using popular presets.")
+            return {address: {} for address in POPULAR_SERVERS}
+        return {
+            str(address): details if isinstance(details, dict) else {}
+            for address, details in data.items()
+            if isinstance(address, str)
+        }
 
+    def _save_servers(self):
+        try:
+            self.server_path.parent.mkdir(parents=True, exist_ok=True)
+            self.server_path.write_text(
+                json.dumps(self.server_data, indent=2), encoding="utf-8"
+            )
+            self.save_error = None
+        except OSError as error:
+            self.save_error = f"Could not save server list: {error}"
+            self.status.setText(self.save_error)
+
+    def _populate_table(self):
+        self.table.setRowCount(len(self.server_data))
+        for row, (address, details) in enumerate(self.server_data.items()):
+            status = details.get("status", "Not checked")
+            values = [
+                address,
+                status,
+                details.get("version", "—"),
+                details.get("players", "—"),
+                details.get("ping", "—"),
+                details.get("motd", "—"),
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, address)
+                    favicon = details.get("favicon")
+                    if isinstance(favicon, str):
+                        try:
+                            image_data = base64.b64decode(
+                                favicon.partition(",")[2], validate=True
+                            )
+                        except (ValueError, binascii.Error):
+                            image_data = b""
+                        icon = QPixmap()
+                        if image_data and icon.loadFromData(image_data, "PNG"):
+                            item.setIcon(QIcon(icon.scaled(28, 28)))
+                self.table.setItem(row, column, item)
+        self.apply_filter()
+
+    def add_server(self):
+        address = self.address.text().strip()
+        try:
+            host, port = parse_server_address(address)
+        except ValueError as error:
+            self.status.setText(str(error))
+            return
+        normalized = f"[{host}]:{port}" if ":" in host else (
+            f"{host}:{port}" if port != 25565 else host
+        )
+        if normalized in self.server_data:
+            self.status.setText("That server is already in your list.")
+            return
+        self.server_data[normalized] = {}
+        self._save_servers()
+        self._populate_table()
+        if self.save_error:
+            return
+        self.address.clear()
+        self.status.setText(f"Added {normalized}. Refresh to query its live status.")
+
+    def add_popular(self):
+        address = self.popular.currentData()
+        if not address:
+            self.status.setText("Choose a popular server first.")
+            return
+        if address in self.server_data:
+            self.status.setText("That server is already in your list.")
+            return
+        self.server_data[address] = {}
+        self._save_servers()
+        self._populate_table()
+        if self.save_error:
+            return
+        self.status.setText(f"Added {address}. Refresh to query its live status.")
+
+    def remove_selected(self):
+        row = self.table.currentRow()
+        item = self.table.item(row, 0) if row >= 0 else None
+        if item is None:
+            self.status.setText("Select a server to remove.")
+            return
+        self.server_data.pop(item.data(Qt.ItemDataRole.UserRole), None)
+        self._save_servers()
+        self._populate_table()
+
+    def select_server(self, row: int, _column: int):
+        item = self.table.item(row, 0)
+        if item:
+            self.address.setText(item.data(Qt.ItemDataRole.UserRole))
+
+    def apply_filter(self, *_):
+        query = self.search.text().casefold()
+        mode = self.online_filter.currentText()
+        for row in range(self.table.rowCount()):
+            text = " ".join(
+                self.table.item(row, column).text()
+                for column in range(self.table.columnCount())
+                if self.table.item(row, column)
+            ).casefold()
+            status = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
+            visible = query in text
+            visible &= mode == "All servers" or status == mode.upper()
+            self.table.setRowHidden(row, not visible)
+
+    def check_server(self):
+        if not self.server_data:
+            self.status.setText("Add a server before refreshing its status.")
+            return
+        addresses = list(self.server_data)
         self.check.setEnabled(False)
-        self.status.setText("Checking...")
-        self.worker = ServerCheckWorker(host, port)
+        self.status.setText(f"Querying {len(addresses)} Minecraft server(s)...")
+        self.worker = ServerCheckWorker(addresses)
         self.worker.result.connect(self.server_result)
+        self.worker.done.connect(self.refresh_done)
         self.worker.finished.connect(lambda: self.check.setEnabled(True))
         self.worker.start()
 
-    def server_result(self, result: str):
-        self.status.setText(result)
+    def server_result(self, address: str, result: dict | None, error: str):
+        if result is None:
+            details = {"status": "OFFLINE", "version": "—", "players": "—", "ping": "—",
+                       "motd": error or "No status response"}
+        else:
+            details = {
+                "status": "ONLINE",
+                "version": result["version"],
+                "players": f'{result["players_online"]}/{result["players_max"]}',
+                "ping": f'{result["latency_ms"]} ms',
+                "motd": result["motd"] or "(No MOTD)",
+                "favicon": result["favicon"],
+            }
+        self.server_data[address] = details
+        self._save_servers()
+        self._populate_table()
+
+    def refresh_done(self):
+        if self.save_error:
+            self.status.setText(self.save_error)
+            return
+        online = sum(
+            details.get("status") == "ONLINE"
+            for details in self.server_data.values()
+        )
+        self.status.setText(f"Status updated: {online} online / {len(self.server_data)} listed.")
 
 
 class UpdateWorker(QThread):
@@ -191,6 +392,8 @@ class SettingsTab(QWidget):
         self.theme.addItem("Arctic", "arctic")
         self.theme.setCurrentIndex(max(0, self.theme.findData(getattr(self.settings, "theme", "gold"))))
         self.theme.currentIndexChanged.connect(lambda _index: self.theme_changed.emit(self.theme.currentData()))
+        self.close_on_launch = QCheckBox("Close launcher after Minecraft starts")
+        self.close_on_launch.setChecked(self.settings.close_launcher_on_launch)
         self.java.setPlaceholderText("Automatic Java runtime")
         self.offline = QCheckBox("Prefer local assets and avoid authentication")
         form.addRow("Minecraft version", self.version)
@@ -199,6 +402,7 @@ class SettingsTab(QWidget):
         form.addRow("Memory", self.ram)
         form.addRow("Java path", self.java)
         form.addRow("Launcher theme", self.theme)
+        form.addRow("After launch", self.close_on_launch)
         form.addRow("", self.offline)
         layout.addLayout(form)
 
@@ -335,5 +539,6 @@ class SettingsTab(QWidget):
         self.settings.ram_mb = self.ram.value() or None
         self.settings.java_path = self.java.text().strip() or None
         self.settings.theme = self.theme.currentData() or "gold"
+        self.settings.close_launcher_on_launch = self.close_on_launch.isChecked()
         config.save(self.settings, self.path)
         self.status.setText("Settings saved")

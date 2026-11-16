@@ -28,6 +28,7 @@ class Settings:
     mod_profile: str = "performance"
     error_reporting: bool = False         # opt-in only
     theme: str = "gold"
+    close_launcher_on_launch: bool = False
 
 
 def _validate(s: Settings) -> Settings:
@@ -44,6 +45,8 @@ def _validate(s: Settings) -> Settings:
         s.theme = "gold"
     if s.ram_mb is not None:
         s.ram_mb = max(1024, min(int(s.ram_mb), 32768))
+    if not isinstance(s.close_launcher_on_launch, bool):
+        s.close_launcher_on_launch = False
     s.offline_username = "".join(c for c in s.offline_username if c.isalnum() or c == "_")[:16] or "Player"
     return s
 

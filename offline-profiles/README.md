@@ -53,3 +53,11 @@ See `docs/` for architecture, plan, security, testing and user guide.
 
 The launcher theme selector includes Gold, Midnight Blue, Emerald, Violet, Crimson, and Arctic.
 Themes change navigation and accent colors while keeping the button palette unchanged.
+
+The offline launcher includes a saved server list with popular presets, search/online filters, and
+live Minecraft status-ping details (server icon, MOTD, version, player counts, and latency). Status checks
+connect directly to the entered server; the launcher does not record player visit history or
+provide a directory of servers that bypass account authentication. The skin tab renders local
+64×64 skins as a textured 3D-style avatar preview. Applying a skin in-game is currently supported
+by the bundled Fabric client mod only on Minecraft 1.21.1. The Settings tab also has an optional
+close-launcher-after-start preference; the game process continues independently.

@@ -52,28 +52,24 @@ Use the v3 UI's INSTALL MINECRAFT + JAVA action, or launch normally and let the 
 From a Windows checkout:
 
 ~~~powershell
-.\build\build_installer.ps1
+.\offline-profiles\build\windows.ps1
 ~~~
 
 The installer is written to:
 
 ~~~text
-dist\installer\LumenSetup-<version>.exe
+offline-profiles\dist\LumenOfflineSetup.exe
 ~~~
 
-## GitHub Actions build
+## GitHub Actions release
 
-Push a version tag to build the Windows installer on a hosted Windows runner:
+Push a version tag to build the client mod and Windows installer on hosted runners.
+The release workflow publishes the installer and its SHA-256 checksum:
 
 ~~~bash
-git add .
-git commit -m "Release Lumen"
-git push origin main
-git tag v0.3.2
-git push origin v0.3.2
+git tag v1.3.2
+git push origin v1.3.2
 ~~~
-
-The release workflow uploads the installer as the LumenSetup-windows artifact.
 
 ## Tests
 
