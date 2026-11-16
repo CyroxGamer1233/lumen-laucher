@@ -52,6 +52,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[gui,dev]"
           python -m pytest -q
+          python -c "from lumen.modern_offline import LumenWindow"
           python -m PyInstaller --noconfirm --clean --windowed --name LumenOffline --paths src --collect-all PySide6 --collect-all truststore --icon assets/lumen-app.ico --add-data "assets/lumen-app.ico;assets" --add-data "client-mod;client-mod" gui_entry.py
       - name: Build Windows installer and checksum
         shell: pwsh
@@ -61,7 +62,7 @@ jobs:
           $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe was not found" }
-          $releaseVersion = "1.3.2"
+          $releaseVersion = "1.3.3"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $releaseVersion = $env:GITHUB_REF_NAME.TrimStart("v")
           }

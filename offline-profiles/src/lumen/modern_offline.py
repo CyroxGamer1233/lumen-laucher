@@ -8,11 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import minecraft_launcher_lib
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint, QObject
-from PySide6.QtGui import (
-    QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTransform, QPolygonF, QPointF, QRect,
+from PySide6.QtCore import (
+    QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint, QPointF,
+    QObject, Qt,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtGui import (
+    QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTransform, QPolygonF, QRect,
+)
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame,
     QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QLineEdit,

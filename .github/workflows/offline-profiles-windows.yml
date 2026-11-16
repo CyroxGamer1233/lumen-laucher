@@ -43,6 +43,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[gui,dev]"
           python -m pytest -q
+          python -c "from lumen.modern_offline import LumenWindow"
 
       - name: Build executable
         working-directory: offline-profiles
