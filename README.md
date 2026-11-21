@@ -67,8 +67,8 @@ Push a version tag to build the client mod and Windows installer on hosted runne
 The release workflow publishes the installer and its SHA-256 checksum:
 
 ~~~bash
-git tag v1.3.3
-git push origin v1.3.3
+git tag v1.3.4
+git push origin v1.3.4
 ~~~
 
 ## Tests

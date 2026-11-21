@@ -10,10 +10,10 @@ from pathlib import Path
 import minecraft_launcher_lib
 from PySide6.QtCore import (
     QEasingCurve, QPropertyAnimation, QThread, QTimer, Signal, QPoint, QPointF,
-    QObject, Qt,
+    QObject, QRect, Qt,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTransform, QPolygonF, QRect,
+    QColor, QFont, QIcon, QImage, QPainter, QPixmap, QTransform, QPolygonF,
 )
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame,
